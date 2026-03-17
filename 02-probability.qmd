@@ -1,0 +1,1019 @@
+---
+title: "Probability Sampling"
+subtitle: "SRS, Systematic, Stratified, Cluster, dan PPS — teori, estimator, dan implementasi"
+---
+
+```{r}
+#| label: setup
+#| include: false
+source("_common.R")
+pop <- load_population()
+N <- nrow(pop)
+```
+
+Probability sampling adalah satu-satunya paradigma sampling yang memungkinkan **inferensi berbasis desain** (*design-based inference*) — setiap unit memiliki probabilitas seleksi yang diketahui dan >0, sehingga kita dapat mengkuantifikasi ketidakpastian estimasi secara formal [@lohr2021].
+
+## Simple Random Sampling (SRS)
+
+### Konsep
+
+Setiap subset berukuran $n$ dari populasi $N$ memiliki peluang yang sama untuk terpilih. Probabilitas inklusi setiap unit: $\pi_i = n/N$.
+
+::: {.callout-note}
+## SRS With vs. Without Replacement
+
+- **SRSWR** (with replacement): unit bisa terpilih >1 kali. Observasi independen. Jarang digunakan dalam survei.
+- **SRSWOR** (without replacement): unit hanya terpilih sekali. Standar dalam survei. Observasi tidak independen tetapi lebih efisien.
+:::
+
+### Estimator
+
+Untuk SRSWOR:
+
+| Parameter | Estimator | Variance Estimator |
+|-----------|-----------|-------------------|
+| Mean $\bar{Y}$ | $\bar{y} = \frac{1}{n}\sum_{i=1}^n y_i$ | $\hat{V}(\bar{y}) = (1-f)\frac{s^2}{n}$ |
+| Total $Y_{total}$ | $\hat{Y} = N\bar{y}$ | $\hat{V}(\hat{Y}) = N^2(1-f)\frac{s^2}{n}$ |
+| Proporsi $P$ | $\hat{p} = \frac{1}{n}\sum_{i=1}^n y_i$ | $\hat{V}(\hat{p}) = (1-f)\frac{\hat{p}(1-\hat{p})}{n-1}$ |
+
+di mana $f = n/N$ adalah **sampling fraction** dan $s^2 = \frac{1}{n-1}\sum(y_i - \bar{y})^2$.
+
+### Finite Population Correction (FPC)
+
+$$
+\text{FPC} = 1 - f = 1 - \frac{n}{N}
+$$ {#eq-fpc}
+
+::: {.column-margin}
+FPC signifikan ketika $f > 0.05$ (sampling lebih dari 5% populasi). Untuk populasi besar atau sampling fraction kecil, FPC ≈ 1 dan bisa diabaikan.
+:::
+
+### Implementasi
+
+::: {.panel-tabset}
+
+#### R
+
+```{r}
+#| label: fig-srs-demo
+#| fig-cap: "SRS dari populasi: distribusi sampel vs populasi income."
+#| fig-width: 8
+#| fig-height: 5
+
+set.seed(2024)
+n <- 200
+
+# Draw SRS
+srs_idx <- sample(1:N, n, replace = FALSE)
+srs_sample <- pop[srs_idx, ]
+
+# Estimates
+srs_mean <- mean(srs_sample$income)
+pop_mean <- mean(pop$income)
+s2 <- var(srs_sample$income)
+f <- n / N
+se_srs <- sqrt((1 - f) * s2 / n)
+ci_lower <- srs_mean - 1.96 * se_srs
+ci_upper <- srs_mean + 1.96 * se_srs
+
+# Plot
+ggplot() +
+  geom_histogram(data = pop, aes(x = income, y = after_stat(density)),
+                 bins = 60, fill = "grey70", alpha = 0.5) +
+  geom_histogram(data = srs_sample, aes(x = income, y = after_stat(density)),
+                 bins = 40, fill = "#2563eb", alpha = 0.6) +
+  geom_vline(xintercept = pop_mean, linetype = "dashed",
+             color = "#dc2626", linewidth = 0.8) +
+  geom_vline(xintercept = srs_mean, linetype = "solid",
+             color = "#2563eb", linewidth = 0.8) +
+  scale_x_continuous(labels = label_comma()) +
+  labs(
+    title = "SRS: Distribusi Sampel vs Populasi",
+    subtitle = sprintf("n = %d | ȳ = %s | 95%% CI: [%s, %s] | μ = %s",
+                       n, format(round(srs_mean), big.mark = ","),
+                       format(round(ci_lower), big.mark = ","),
+                       format(round(ci_upper), big.mark = ","),
+                       format(round(pop_mean), big.mark = ",")),
+    x = "Income", y = "Density"
+  )
+```
+
+```{r}
+#| label: tbl-srs-estimates
+#| tbl-cap: "Ringkasan estimasi SRS untuk income."
+
+tibble(
+  Statistic = c("Sample Mean (ȳ)", "Population Mean (μ)",
+                "Sample Variance (s²)", "SE(ȳ)", "95% CI Lower",
+                "95% CI Upper", "FPC", "Sampling Fraction (f)"),
+  Value = c(
+    format(round(srs_mean), big.mark = ","),
+    format(round(pop_mean), big.mark = ","),
+    format(round(s2), big.mark = ","),
+    format(round(se_srs), big.mark = ","),
+    format(round(ci_lower), big.mark = ","),
+    format(round(ci_upper), big.mark = ","),
+    round(1 - f, 4),
+    round(f, 4)
+  )
+) |>
+  gt() |>
+  tab_header(title = "SRS Estimates — Income") |>
+  cols_align(align = "right", columns = Value)
+```
+
+#### Python
+
+```{python}
+#| label: fig-srs-demo-py
+#| fig-cap: "SRS dari populasi: distribusi sampel vs populasi income (Python)."
+#| fig-width: 8
+#| fig-height: 5
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+
+np.random.seed(2024)
+
+pop_py = r.pop
+income = pop_py['income'].values
+N_py = len(income)
+n_py = 200
+
+srs_idx = np.random.choice(N_py, size=n_py, replace=False)
+srs_sample = income[srs_idx]
+
+srs_mean = srs_sample.mean()
+pop_mean = income.mean()
+s2 = srs_sample.var(ddof=1)
+f = n_py / N_py
+se_srs = np.sqrt((1 - f) * s2 / n_py)
+
+fig, ax = plt.subplots(figsize=(8, 5))
+ax.hist(income, bins=60, density=True, alpha=0.4, color='grey',
+        label='Population')
+ax.hist(srs_sample, bins=40, density=True, alpha=0.6, color='#2563eb',
+        label=f'SRS (n={n_py})')
+ax.axvline(pop_mean, linestyle='--', color='#dc2626', linewidth=1.2,
+           label=f'μ = {pop_mean:,.0f}')
+ax.axvline(srs_mean, linestyle='-', color='#2563eb', linewidth=1.2,
+           label=f'ȳ = {srs_mean:,.0f}')
+ax.set_xlabel('Income')
+ax.set_ylabel('Density')
+ax.set_title('SRS: Distribusi Sampel vs Populasi', fontweight='bold')
+ax.xaxis.set_major_formatter(mticker.FuncFormatter(
+    lambda x, p: f'{x:,.0f}'))
+ax.legend()
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+### Kelebihan & Keterbatasan SRS
+
+| Kelebihan | Keterbatasan |
+|-----------|-------------|
+| Sederhana dan mudah dipahami | Butuh sampling frame lengkap |
+| Unbiased by design | Tidak efisien jika populasi heterogen |
+| Variance mudah dihitung | Tidak menjamin representasi subgroup |
+| Basis perbandingan untuk metode lain | Mahal jika populasi tersebar geografis |
+
+## Systematic Sampling
+
+### Konsep
+
+Pilih unit setiap interval $k = \lfloor N/n \rfloor$ setelah random start $r \in [1, k]$. Sampel: unit ke-$r, r+k, r+2k, \ldots$
+
+### Risiko dan Mitigasi
+
+::: {.callout-warning}
+## Periodicity Danger
+Jika frame memiliki pola periodik dengan periode = $k$ (atau kelipatan), systematic sampling menghasilkan estimasi yang sangat biased. Contoh: daftar rumah tangga yang diurutkan per blok (setiap 10 rumah = 1 RT), lalu $k = 10$ → selalu memilih posisi yang sama di setiap RT.
+:::
+
+- **Mitigasi:** (1) randomize urutan frame sebelum sampling, (2) gunakan circular systematic sampling, (3) multiple random starts.
+
+### Implementasi
+
+::: {.panel-tabset}
+
+#### R
+
+```{r}
+#| label: fig-systematic
+#| fig-cap: "Perbandingan SRS vs Systematic Sampling: posisi unit terpilih dalam frame."
+#| fig-width: 8
+#| fig-height: 4
+
+set.seed(2024)
+n_sys <- 100
+k <- floor(N / n_sys)
+r <- sample(1:k, 1)
+
+sys_idx <- seq(r, N, by = k)[1:n_sys]
+srs_idx_100 <- sort(sample(1:N, n_sys))
+
+plot_df <- tibble(
+  position = c(sys_idx, srs_idx_100),
+  method = rep(c("Systematic", "SRS"), each = n_sys)
+)
+
+ggplot(plot_df, aes(x = position, y = method, color = method)) +
+  geom_jitter(height = 0.15, size = 1.2, alpha = 0.7) +
+  scale_color_manual(values = c("SRS" = "#2563eb", "Systematic" = "#059669")) +
+  labs(
+    title = "Posisi Unit Terpilih: SRS vs Systematic",
+    subtitle = sprintf("n = %d, k = %d, random start r = %d", n_sys, k, r),
+    x = "Position in Frame", y = NULL, color = "Method"
+  ) +
+  theme(legend.position = "none")
+```
+
+```{r}
+sys_sample <- pop[sys_idx, ]
+sys_mean <- mean(sys_sample$income)
+
+tibble(
+  Method = c("SRS", "Systematic"),
+  Mean = c(mean(pop[srs_idx_100, ]$income), sys_mean),
+  SE = c(
+    sqrt((1 - n_sys/N) * var(pop[srs_idx_100, ]$income) / n_sys),
+    sqrt((1 - n_sys/N) * var(sys_sample$income) / n_sys)
+  )
+) |>
+  mutate(across(c(Mean, SE), ~format(round(.), big.mark = ","))) |>
+  gt() |>
+  tab_header(title = "Perbandingan Estimasi: SRS vs Systematic")
+```
+
+#### Python
+
+```{python}
+#| label: fig-systematic-py
+#| fig-cap: "Perbandingan SRS vs Systematic Sampling (Python)."
+#| fig-width: 8
+#| fig-height: 4
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+np.random.seed(2024)
+N_py = len(r.pop)
+n_sys = 100
+k = N_py // n_sys
+rand_start = np.random.randint(0, k)
+
+sys_idx = np.arange(rand_start, N_py, step=k)[:n_sys]
+srs_idx = np.sort(np.random.choice(N_py, size=n_sys, replace=False))
+
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.scatter(sys_idx, [1]*len(sys_idx), alpha=0.6, s=12, c='#059669',
+           label='Systematic')
+ax.scatter(srs_idx, [0]*len(srs_idx), alpha=0.6, s=12, c='#2563eb',
+           label='SRS')
+ax.set_yticks([0, 1])
+ax.set_yticklabels(['SRS', 'Systematic'])
+ax.set_xlabel('Position in Frame')
+ax.set_title('Posisi Unit Terpilih: SRS vs Systematic', fontweight='bold')
+ax.legend()
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+## Stratified Random Sampling
+
+### Prinsip
+
+Bagi populasi menjadi $H$ strata yang **homogen secara internal** (intra-strata variance kecil) dan **heterogen antar strata** (inter-strata variance besar). Tarik SRS independen dari setiap stratum.
+
+### Estimator
+
+$$
+\bar{y}_{st} = \sum_{h=1}^{H} W_h \bar{y}_h
+$$ {#eq-strat-mean}
+
+di mana $W_h = N_h / N$ adalah bobot stratum.
+
+$$
+\text{Var}(\bar{y}_{st}) = \sum_{h=1}^{H} W_h^2 \left(1 - f_h\right) \frac{s_h^2}{n_h}
+$$ {#eq-strat-var}
+
+### Metode Alokasi
+
+| Alokasi | Formula $n_h$ | Kapan Optimal |
+|---------|--------------|---------------|
+| **Proportional** | $n_h = n \cdot W_h$ | Default; varians antar strata mirip |
+| **Neyman (Optimal)** | $n_h = n \cdot \frac{W_h S_h}{\sum W_h S_h}$ | Varians berbeda antar strata |
+| **Power** | $n_h = n \cdot \frac{W_h S_h^a}{\sum W_h S_h^a}$ | Compromise ($a=0.5$ populer) |
+
+::: {.column-margin}
+Neyman allocation meminimalkan $\text{Var}(\bar{y}_{st})$ untuk total $n$ tetap. Alokasi proporsional lebih robust jika survei mengukur banyak variabel.
+:::
+
+### Implementasi
+
+::: {.panel-tabset}
+
+#### R
+
+```{r}
+#| label: fig-stratified
+#| fig-cap: "Stratified sampling menggunakan region sebagai stratum: distribusi income per stratum dan sampel terpilih."
+#| fig-width: 10
+#| fig-height: 6
+
+set.seed(2024)
+n_strat <- 200
+
+# Proportional allocation
+strata_info <- pop |>
+  summarise(
+    N_h = n(),
+    S_h = sd(income),
+    mean_h = mean(income),
+    .by = region
+  ) |>
+  mutate(
+    W_h = N_h / N,
+    n_prop = round(n_strat * W_h),
+    n_neyman = round(n_strat * (W_h * S_h) / sum(W_h * S_h))
+  )
+
+# Draw proportional stratified sample
+strat_sample <- pop |>
+  left_join(strata_info |> select(region, n_prop), by = "region") |>
+  group_by(region, n_prop) |>
+  group_modify(~ slice_sample(.x, n = min(.y$n_prop[[1]], nrow(.x)))) |>
+  ungroup() |>
+  select(-n_prop)
+
+# Compute stratified mean
+strat_estimates <- strat_sample |>
+  summarise(
+    ybar_h = mean(income),
+    s2_h = var(income),
+    n_h = n(),
+    .by = region
+  ) |>
+  left_join(strata_info |> select(region, W_h, N_h), by = "region") |>
+  mutate(f_h = n_h / N_h)
+
+ybar_st <- sum(strat_estimates$W_h * strat_estimates$ybar_h)
+var_st <- sum(strat_estimates$W_h^2 * (1 - strat_estimates$f_h) *
+                strat_estimates$s2_h / strat_estimates$n_h)
+se_st <- sqrt(var_st)
+
+# Plot
+ggplot(pop, aes(x = income, fill = region)) +
+  geom_histogram(bins = 40, alpha = 0.4, position = "identity") +
+  geom_histogram(data = strat_sample, bins = 30, alpha = 0.8) +
+  facet_wrap(~region, scales = "free_y") +
+  scale_x_continuous(labels = label_comma()) +
+  labs(
+    title = "Stratified Sampling by Region",
+    subtitle = sprintf("n = %d (proportional) | ȳ_st = %s | SE = %s",
+                       n_strat, format(round(ybar_st), big.mark = ","),
+                       format(round(se_st), big.mark = ",")),
+    x = "Income", y = "Count", fill = "Region"
+  )
+```
+
+```{r}
+#| label: tbl-allocation
+#| tbl-cap: "Perbandingan alokasi proporsional vs Neyman per stratum."
+
+strata_info |>
+  select(region, N_h, W_h, S_h, n_prop, n_neyman) |>
+  mutate(
+    W_h = round(W_h, 3),
+    S_h = format(round(S_h), big.mark = ",")
+  ) |>
+  gt() |>
+  tab_header(title = "Alokasi Sampel per Stratum") |>
+  cols_label(
+    region = "Region", N_h = "Nₕ", W_h = "Wₕ", S_h = "Sₕ",
+    n_prop = "n (Proportional)", n_neyman = "n (Neyman)"
+  )
+```
+
+#### Python
+
+```{python}
+#| label: fig-stratified-py
+#| fig-cap: "Stratified sampling by region (Python implementation)."
+#| fig-width: 10
+#| fig-height: 6
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+
+np.random.seed(2024)
+
+pop_py = r.pop.copy()
+n_strat = 200
+N_py = len(pop_py)
+
+# Proportional allocation
+strata = pop_py.groupby('region').agg(
+    N_h=('income', 'size'),
+    S_h=('income', 'std'),
+    mean_h=('income', 'mean')
+).reset_index()
+strata['W_h'] = strata['N_h'] / N_py
+strata['n_prop'] = (n_strat * strata['W_h']).round().astype(int)
+
+# Draw stratified sample
+samples = []
+for _, row in strata.iterrows():
+    stratum_data = pop_py[pop_py['region'] == row['region']]
+    s = stratum_data.sample(n=int(row['n_prop']), random_state=2024)
+    samples.append(s)
+strat_sample = pd.concat(samples)
+
+# Stratified mean
+ybar_st = sum(strata['W_h'] * strat_sample.groupby('region')['income'].mean())
+
+regions = strata['region'].values
+fig, axes = plt.subplots(2, 3, figsize=(10, 6))
+axes = axes.flatten()
+for idx, reg in enumerate(regions):
+    ax = axes[idx]
+    pop_reg = pop_py[pop_py['region'] == reg]['income']
+    samp_reg = strat_sample[strat_sample['region'] == reg]['income']
+    ax.hist(pop_reg, bins=30, alpha=0.3, color='grey', density=True)
+    ax.hist(samp_reg, bins=20, alpha=0.7, color='#059669', density=True)
+    ax.set_title(reg, fontweight='bold')
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(
+        lambda x, p: f'{x/1e6:.1f}M'))
+
+if len(regions) < 6:
+    axes[-1].set_visible(False)
+
+fig.suptitle(f'Stratified Sampling by Region (n={n_strat}, ȳ_st={ybar_st:,.0f})',
+             fontweight='bold')
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+### Gain in Precision vs. SRS
+
+::: {.panel-tabset}
+
+#### R
+
+```{r}
+#| label: fig-strat-vs-srs
+#| fig-cap: "Perbandingan presisi: Stratified (proportional & Neyman) vs SRS melalui simulasi Monte Carlo."
+#| fig-width: 9
+#| fig-height: 5
+
+set.seed(2024)
+B <- 1000
+n_comp <- 200
+true_mean <- mean(pop$income)
+
+# SRS simulation
+srs_means <- replicate(B, mean(sample(pop$income, n_comp)))
+
+# Stratified proportional simulation
+split_income <- split(pop$income, pop$region)
+n_prop_map <- setNames(strata_info$n_prop, strata_info$region)
+W_map <- setNames(strata_info$W_h, strata_info$region)
+
+strat_prop_means <- replicate(B, {
+  ybar_h <- vapply(names(split_income), function(reg) {
+    x <- split_income[[reg]]
+    mean(sample(x, size = min(n_prop_map[[reg]], length(x)), replace = FALSE))
+  }, numeric(1))
+  sum(W_map[names(ybar_h)] * ybar_h)
+})
+
+# Compare
+comp_df <- tibble(
+  estimate = c(srs_means, strat_prop_means),
+  method = rep(c("SRS", "Stratified (Prop.)"), each = B)
+)
+
+ggplot(comp_df, aes(x = estimate, fill = method)) +
+  geom_histogram(bins = 50, alpha = 0.6, position = "identity") +
+  geom_vline(xintercept = true_mean, linetype = "dashed", color = "red") +
+  scale_x_continuous(labels = label_comma()) +
+  scale_fill_manual(values = c("SRS" = "#2563eb", "Stratified (Prop.)" = "#059669")) +
+  labs(
+    title = "Monte Carlo: SRS vs Stratified Sampling",
+    subtitle = sprintf("SE(SRS) = %s | SE(Strat) = %s | Efficiency gain = %.1f%%",
+                       format(round(sd(srs_means)), big.mark = ","),
+                       format(round(sd(strat_prop_means)), big.mark = ","),
+                       (1 - var(strat_prop_means)/var(srs_means)) * 100),
+    x = "Estimated Mean Income", y = "Count", fill = "Method"
+  )
+```
+
+#### Python
+
+```{python}
+#| label: fig-strat-vs-srs-py
+#| fig-cap: "Monte Carlo comparison: SRS vs Stratified (Python)."
+#| fig-width: 9
+#| fig-height: 5
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+
+np.random.seed(2024)
+
+pop_py = r.pop.copy()
+income = pop_py['income'].values
+N_py = len(income)
+n_comp = 200
+B = 1000
+true_mean = income.mean()
+
+# SRS
+srs_means = [np.mean(np.random.choice(income, n_comp, replace=False))
+             for _ in range(B)]
+
+# Stratified proportional
+regions = pop_py['region'].unique()
+strata_info_py = pop_py.groupby('region').agg(
+    N_h=('income', 'size')).reset_index()
+strata_info_py['W_h'] = strata_info_py['N_h'] / N_py
+strata_info_py['n_h'] = (n_comp * strata_info_py['W_h']).round().astype(int)
+
+strat_means = []
+for _ in range(B):
+    est = 0
+    for _, row in strata_info_py.iterrows():
+        stratum = pop_py[pop_py['region'] == row['region']]['income'].values
+        s = np.random.choice(stratum, size=int(row['n_h']), replace=False)
+        est += row['W_h'] * s.mean()
+    strat_means.append(est)
+
+fig, ax = plt.subplots(figsize=(9, 5))
+ax.hist(srs_means, bins=50, alpha=0.5, color='#2563eb', label='SRS')
+ax.hist(strat_means, bins=50, alpha=0.5, color='#059669', label='Stratified')
+ax.axvline(true_mean, linestyle='--', color='red', linewidth=1.2)
+ax.set_xlabel('Estimated Mean Income')
+ax.set_ylabel('Count')
+se_srs = np.std(srs_means)
+se_strat = np.std(strat_means)
+gain = (1 - np.var(strat_means)/np.var(srs_means)) * 100
+ax.set_title(f'SRS vs Stratified | SE(SRS)={se_srs:,.0f}, SE(Strat)={se_strat:,.0f}, Gain={gain:.1f}%',
+             fontweight='bold')
+ax.xaxis.set_major_formatter(mticker.FuncFormatter(
+    lambda x, p: f'{x:,.0f}'))
+ax.legend()
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+## Cluster Sampling
+
+### Konsep
+
+Populasi dibagi menjadi **cluster** (kelompok, biasanya geografis). Pilih subset cluster secara random, lalu observasi **semua** unit dalam cluster terpilih (one-stage) atau subsample dalam cluster (two-stage).
+
+### Intra-class Correlation Coefficient (ICC)
+
+$$
+\rho = \frac{\sigma^2_b}{\sigma^2_b + \sigma^2_w}
+$$ {#eq-icc}
+
+di mana $\sigma^2_b$ = between-cluster variance, $\sigma^2_w$ = within-cluster variance.
+
+::: {.column-margin}
+ICC tinggi → unit dalam cluster mirip satu sama lain → cluster sampling **kurang efisien** dibanding SRS. Idealnya, cluster harus heterogen secara internal (ICC rendah).
+:::
+
+### Design Effect (DEFF) karena Clustering
+
+$$
+\text{DEFF} = 1 + (m - 1)\rho
+$$ {#eq-deff-cluster}
+
+di mana $m$ = rata-rata jumlah unit per cluster. Jika $\rho = 0.05$ dan $m = 20$, maka $\text{DEFF} = 1 + 19 \times 0.05 = 1.95$ — hampir dua kali lipat varians dibanding SRS!
+
+### Implementasi
+
+::: {.panel-tabset}
+
+#### R
+
+```{r}
+#| label: fig-cluster
+#| fig-cap: "Cluster sampling: 10 dari 50 district dipilih, semua rumah tangga dalam cluster terpilih disurvei."
+#| fig-width: 9
+#| fig-height: 5
+
+set.seed(2024)
+districts <- unique(pop$district)
+n_clusters <- 10
+
+selected_clusters <- sample(districts, n_clusters)
+cluster_sample <- pop |> filter(district %in% selected_clusters)
+
+# Cluster-level summary
+cluster_means <- cluster_sample |>
+  summarise(
+    mean_income = mean(income),
+    n_units = n(),
+    .by = district
+  )
+
+# Simple cluster estimator (equal-size assumption relaxed)
+M <- length(districts)
+m <- n_clusters
+cluster_mean <- mean(cluster_means$mean_income)
+
+ggplot(pop, aes(x = district, y = income)) +
+  geom_boxplot(aes(fill = district %in% selected_clusters),
+               outlier.size = 0.5, show.legend = FALSE) +
+  scale_fill_manual(values = c("FALSE" = "grey85", "TRUE" = "#d97706")) +
+  scale_y_continuous(labels = label_comma()) +
+  coord_flip() +
+  labs(
+    title = "Cluster Sampling: District sebagai Cluster",
+    subtitle = sprintf("%d dari %d district terpilih | Total n = %d",
+                       n_clusters, length(districts), nrow(cluster_sample)),
+    x = NULL, y = "Income"
+  ) +
+  theme(axis.text.y = element_text(size = 6))
+```
+
+```{r}
+#| label: icc-calculation
+
+# Compute ICC using ANOVA approach
+anova_fit <- aov(income ~ district, data = pop)
+anova_tbl <- summary(anova_fit)[[1]]
+msb <- anova_tbl$`Mean Sq`[1]
+msw <- anova_tbl$`Mean Sq`[2]
+n_bar <- nrow(pop) / length(districts)
+icc <- (msb - msw) / (msb + (n_bar - 1) * msw)
+
+tibble(
+  Metric = c("ICC (ρ)", "Mean cluster size (m̄)", "DEFF = 1+(m̄-1)ρ",
+             "Clusters selected", "Total sample size"),
+  Value = c(round(icc, 4), round(n_bar, 1),
+            round(1 + (n_bar - 1) * icc, 2),
+            n_clusters, nrow(cluster_sample))
+) |>
+  gt() |>
+  tab_header(title = "Cluster Sampling Metrics")
+```
+
+#### Python
+
+```{python}
+#| label: fig-cluster-py
+#| fig-cap: "Cluster sampling visualization (Python)."
+#| fig-width: 9
+#| fig-height: 5
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+np.random.seed(2024)
+pop_py = r.pop.copy()
+districts = pop_py['district'].unique()
+n_clusters = 10
+
+selected = np.random.choice(districts, n_clusters, replace=False)
+cluster_sample = pop_py[pop_py['district'].isin(selected)]
+
+cluster_means_py = cluster_sample.groupby('district')['income'].agg(
+    ['mean', 'count']).reset_index()
+
+fig, ax = plt.subplots(figsize=(9, 5))
+colors = ['#d97706' if d in selected else 'lightgrey' for d in districts]
+district_means = pop_py.groupby('district')['income'].mean().reindex(districts)
+sorted_idx = district_means.sort_values().index
+
+bar_colors = ['#d97706' if d in selected else 'lightgrey' for d in sorted_idx]
+ax.barh(range(len(sorted_idx)), district_means[sorted_idx], color=bar_colors)
+ax.set_yticks(range(len(sorted_idx)))
+ax.set_yticklabels(sorted_idx, fontsize=5)
+ax.set_xlabel('Mean Income')
+ax.set_title(f'Cluster Sampling: {n_clusters}/{len(districts)} Districts Selected',
+             fontweight='bold')
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+## Probability Proportional to Size (PPS)
+
+### Konsep
+
+Unit dipilih dengan probabilitas proporsional terhadap ukuran (size measure) — misalnya populasi, jumlah rumah tangga, atau revenue. Unit besar memiliki peluang lebih tinggi untuk terpilih.
+
+### Estimator
+
+**Horvitz-Thompson estimator** [@horvitz1952]:
+
+$$
+\hat{Y}_{HT} = \sum_{i \in s} \frac{y_i}{\pi_i}
+$$ {#eq-ht}
+
+di mana $\pi_i$ = probabilitas inklusi unit $i$.
+
+**Hansen-Hurwitz estimator** (PPS with replacement) [@hansen1943]:
+
+$$
+\hat{Y}_{HH} = \frac{1}{n} \sum_{i=1}^{n} \frac{y_i}{p_i}
+$$ {#eq-hh}
+
+di mana $p_i = X_i / X_{total}$ adalah probabilitas seleksi pada setiap draw.
+
+### Implementasi
+
+::: {.panel-tabset}
+
+#### R
+
+```{r}
+#| label: fig-pps
+#| fig-cap: "PPS sampling: district dipilih dengan probabilitas proporsional terhadap jumlah rumah tangga."
+#| fig-width: 9
+#| fig-height: 5
+
+set.seed(2024)
+
+# Size measure = number of households per district
+district_size <- pop |>
+  summarise(size = n(), total_income = sum(income), .by = district) |>
+  mutate(prob = size / sum(size))
+
+# PPS systematic selection of 10 districts
+n_pps <- 10
+cum_prob <- cumsum(district_size$prob)
+interval <- 1 / n_pps
+start <- runif(1, 0, interval)
+select_points <- start + (0:(n_pps - 1)) * interval
+
+pps_selected <- sapply(select_points, function(p) {
+  district_size$district[min(which(cum_prob >= p))]
+})
+
+pps_sample <- pop |> filter(district %in% pps_selected)
+
+# HT-like estimator for mean
+pi_district <- district_size |>
+  filter(district %in% pps_selected) |>
+  mutate(pi_i = pmin(n_pps * prob, 1))
+
+ggplot(district_size, aes(x = reorder(district, size), y = size)) +
+  geom_col(aes(fill = district %in% pps_selected)) +
+  scale_fill_manual(values = c("FALSE" = "grey80", "TRUE" = "#dc2626"),
+                    labels = c("Not selected", "Selected (PPS)")) +
+  coord_flip() +
+  labs(
+    title = "PPS Sampling: Selection Proportional to District Size",
+    subtitle = sprintf("%d districts selected via PPS systematic", n_pps),
+    x = NULL, y = "Number of Households", fill = NULL
+  ) +
+  theme(axis.text.y = element_text(size = 6))
+```
+
+#### Python
+
+```{python}
+#| label: fig-pps-py
+#| fig-cap: "PPS sampling visualization (Python)."
+#| fig-width: 9
+#| fig-height: 5
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+np.random.seed(2024)
+pop_py = r.pop.copy()
+
+dist_size = pop_py.groupby('district').size().reset_index(name='size')
+dist_size['prob'] = dist_size['size'] / dist_size['size'].sum()
+
+n_pps = 10
+cum_prob = dist_size['prob'].cumsum().values
+interval = 1 / n_pps
+start = np.random.uniform(0, interval)
+select_points = start + np.arange(n_pps) * interval
+
+selected_pps = []
+for p in select_points:
+    idx = np.searchsorted(cum_prob, p)
+    selected_pps.append(dist_size.iloc[idx]['district'])
+
+dist_size['selected'] = dist_size['district'].isin(selected_pps)
+dist_size_sorted = dist_size.sort_values('size')
+
+fig, ax = plt.subplots(figsize=(9, 5))
+colors = ['#dc2626' if s else 'lightgrey'
+          for s in dist_size_sorted['selected']]
+ax.barh(range(len(dist_size_sorted)), dist_size_sorted['size'], color=colors)
+ax.set_yticks(range(len(dist_size_sorted)))
+ax.set_yticklabels(dist_size_sorted['district'], fontsize=5)
+ax.set_xlabel('Number of Households')
+ax.set_title(f'PPS Sampling: {n_pps} Districts Selected', fontweight='bold')
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+## Perbandingan Metode: Simulasi Monte Carlo
+
+::: {.panel-tabset}
+
+### R
+
+```{r}
+#| label: fig-mc-comparison
+#| fig-cap: "Monte Carlo comparison (B=1000): MSE dan bias dari empat metode sampling untuk estimasi mean income."
+#| fig-width: 10
+#| fig-height: 6
+
+set.seed(2024)
+B <- 1000
+n_target <- 200
+true_mean <- mean(pop$income)
+
+# 1. SRS
+srs_est <- replicate(B, {
+  s <- slice_sample(pop, n = n_target)
+  mean(s$income)
+})
+
+# 2. Stratified (proportional by region)
+strat_est <- replicate(B, {
+  s <- pop |> slice_sample(prop = n_target / N, by = region)
+  est_h <- s |> summarise(ybar = mean(income), .by = region) |>
+    left_join(strata_info |> select(region, W_h), by = "region")
+  sum(est_h$W_h * est_h$ybar)
+})
+
+# 3. Cluster (10 random districts, all units)
+cluster_est <- replicate(B, {
+  sel <- sample(districts, 10)
+  s <- pop |> filter(district %in% sel)
+  mean(s$income)
+})
+
+# 4. Systematic
+sys_est <- replicate(B, {
+  k_sim <- floor(N / n_target)
+  r_sim <- sample(1:k_sim, 1)
+  idx <- seq(r_sim, N, by = k_sim)[1:n_target]
+  idx <- idx[!is.na(idx)]
+  mean(pop$income[idx])
+})
+
+# Summary
+mc_summary <- tibble(
+  Method = c("SRS", "Stratified", "Cluster", "Systematic"),
+  Bias = c(mean(srs_est), mean(strat_est), mean(cluster_est),
+           mean(sys_est)) - true_mean,
+  Variance = c(var(srs_est), var(strat_est), var(cluster_est), var(sys_est)),
+  MSE = c(mean((srs_est - true_mean)^2), mean((strat_est - true_mean)^2),
+          mean((cluster_est - true_mean)^2), mean((sys_est - true_mean)^2)),
+  RMSE = sqrt(c(mean((srs_est - true_mean)^2), mean((strat_est - true_mean)^2),
+                mean((cluster_est - true_mean)^2), mean((sys_est - true_mean)^2)))
+)
+
+# Error bar plot
+mc_long <- tibble(
+  estimate = c(srs_est, strat_est, cluster_est, sys_est),
+  method = rep(c("SRS", "Stratified", "Cluster", "Systematic"), each = B)
+)
+
+ggplot(mc_long, aes(x = method, y = estimate, fill = method)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 0.5) +
+  geom_hline(yintercept = true_mean, linetype = "dashed", color = "red",
+             linewidth = 0.7) +
+  scale_fill_manual(values = sampling_colors) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    title = "Monte Carlo Comparison: Sampling Methods",
+    subtitle = sprintf("B = %d simulations | True μ = %s | n ≈ %d",
+                       B, format(round(true_mean), big.mark = ","), n_target),
+    x = NULL, y = "Estimated Mean Income", fill = NULL
+  ) +
+  theme(legend.position = "none")
+```
+
+```{r}
+#| label: tbl-mc-summary
+#| tbl-cap: "Ringkasan Monte Carlo: bias, variance, dan MSE per metode."
+
+mc_summary |>
+  mutate(
+    across(c(Bias, RMSE), ~format(round(.), big.mark = ",")),
+    across(c(Variance, MSE), ~format(round(.), big.mark = ","))
+  ) |>
+  gt() |>
+  tab_header(title = "Monte Carlo Summary (B = 1,000)")
+```
+
+### Python
+
+```{python}
+#| label: fig-mc-comparison-py
+#| fig-cap: "Monte Carlo comparison (Python)."
+#| fig-width: 10
+#| fig-height: 6
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+
+np.random.seed(2024)
+pop_py = r.pop.copy()
+income = pop_py['income'].values
+N_py = len(income)
+n_target = 200
+B = 1000
+true_mean = income.mean()
+
+# SRS
+srs_est = [np.mean(np.random.choice(income, n_target, replace=False))
+           for _ in range(B)]
+
+# Systematic
+sys_est = []
+k_sys = N_py // n_target
+for _ in range(B):
+    r_start = np.random.randint(0, k_sys)
+    idx = np.arange(r_start, N_py, k_sys)[:n_target]
+    sys_est.append(income[idx].mean())
+
+results = {'SRS': srs_est, 'Systematic': sys_est}
+
+fig, ax = plt.subplots(figsize=(10, 6))
+bp = ax.boxplot([srs_est, sys_est], labels=['SRS', 'Systematic'],
+                patch_artist=True)
+colors_bp = ['#2563eb', '#7c3aed']
+for patch, color in zip(bp['boxes'], colors_bp):
+    patch.set_facecolor(color)
+    patch.set_alpha(0.6)
+ax.axhline(true_mean, linestyle='--', color='red', linewidth=1)
+ax.set_ylabel('Estimated Mean Income')
+ax.set_title('Monte Carlo Comparison (B=1000)', fontweight='bold')
+ax.yaxis.set_major_formatter(mticker.FuncFormatter(
+    lambda x, p: f'{x:,.0f}'))
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+## Tabel Ringkasan
+
+| Metode | Estimator Mean | Variance | Kapan Digunakan | DEFF vs SRS |
+|--------|---------------|----------|-----------------|-------------|
+| **SRS** | $\bar{y}$ | $(1-f)\frac{s^2}{n}$ | Frame lengkap, populasi homogen | 1.0 (baseline) |
+| **Systematic** | $\bar{y}_{sys}$ | ≈ SRS jika random order | Frame ordered, butuh simplicity | ≈ 1.0 |
+| **Stratified** | $\sum W_h \bar{y}_h$ | $\sum W_h^2(1-f_h)\frac{s_h^2}{n_h}$ | Populasi heterogen, info auxiliary | < 1.0 (lebih efisien) |
+| **Cluster** | $\frac{1}{m}\sum \bar{y}_i$ | Depends on ICC | Constraint geografis/logistik | > 1.0 (kurang efisien) |
+| **PPS** | $\hat{Y}_{HT} = \sum \frac{y_i}{\pi_i}$ | HT variance | Cluster size varies, need proportional representation | Depends on correlation $y$ & size |
+
+::: {.takeaways}
+### Key Takeaways
+
+1. **SRS adalah baseline** — metode lain dibandingkan terhadapnya via Design Effect (DEFF).
+2. **Stratified sampling selalu lebih efisien** (atau sama) dengan SRS jika stratifikasi variabel berkorelasi dengan variabel survei.
+3. **Cluster sampling mengorbankan presisi** untuk efisiensi logistik. ICC dan cluster size menentukan seberapa besar "harga" yang dibayar.
+4. **PPS sampling** tepat ketika cluster berukuran berbeda-beda — memberikan self-weighting design.
+5. **Pemilihan metode** harus mempertimbangkan: ketersediaan frame, budget, variabilitas populasi, dan kebutuhan estimasi subgroup.
+:::
+
+::: {.exercises}
+### Exercises
+
+1. **Efficiency comparison.** Dengan dataset populasi yang disediakan, bandingkan DEFF dari stratified sampling (stratum = `urban_rural`) vs. cluster sampling (cluster = `district`) untuk variabel `expenditure`. Mana yang lebih efisien dan mengapa?
+
+2. **Neyman vs. Proportional.** Hitung alokasi Neyman untuk estimasi mean `income` menggunakan `region` sebagai stratum. Berapa persen efisiensi gain dibanding alokasi proporsional? Kapan perbedaannya substansial?
+
+3. **PPS application.** Desain PPS sampling di mana Anda memilih 5 province dengan probabilitas proporsional terhadap jumlah rumah tangga, kemudian SRS 50 rumah tangga per province terpilih. Implementasikan dan bandingkan hasilnya dengan SRS $n = 250$.
+:::
+
+### Further Reading
+
+- @cochran1977, Chapters 2–5: Derivasi formal estimator dan varians untuk setiap metode.
+- @lohr2021, Chapters 2–6: Pendekatan modern dengan contoh real-world.
+- @kish1965, Chapter 4: Systematic sampling secara mendalam.

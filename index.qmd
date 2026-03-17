@@ -1,0 +1,171 @@
+---
+title: "Sampling Techniques & Sample Size Determination"
+subtitle: "A Practitioner's Comprehensive Guide"
+page-layout: full
+toc: false
+number-sections: false
+---
+
+::: {.hero-banner}
+# Sampling Techniques & Sample Size Determination {.unnumbered}
+
+Panduan komprehensif untuk praktisi dan analis data — dari fondasi teori sampling hingga penentuan ukuran sampel dan analisis survei kompleks.
+:::
+
+## Peta Materi {.unnumbered}
+
+Diagram berikut menunjukkan learning path dari konsep dasar hingga implementasi praktis:
+
+```{mermaid}
+%%| fig-width: 9
+flowchart TD
+    A["🏗️ <b>1. Foundations</b><br/>Konsep dasar, TSE framework,<br/>sampling error vs non-sampling error"] --> B["🎲 <b>2. Probability Sampling</b><br/>SRS, Systematic, Stratified,<br/>Cluster, PPS"]
+    A --> C["📋 <b>3. Non-Probability Sampling</b><br/>Convenience, Quota, Snowball,<br/>RDS, Model-based inference"]
+    B --> D["🔧 <b>4. Complex Designs</b><br/>Multi-stage, DEFF,<br/>Variance estimation"]
+    C --> D
+    D --> E["📐 <b>5. Sample Size</b><br/>Basic → Power analysis →<br/>Bayesian & ML approaches"]
+    D --> F["⚖️ <b>6. Weighting & DEFF</b><br/>Base weight, calibration,<br/>raking, diagnostics"]
+    E --> G["🗺️ <b>7. Practical Guide</b><br/>Decision framework,<br/>case study end-to-end"]
+    F --> G
+
+    style A fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a5f
+    style B fill:#d1fae5,stroke:#059669,stroke-width:2px,color:#064e3b
+    style C fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#78350f
+    style D fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#3b0764
+    style E fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e3a5f
+    style F fill:#fce7f3,stroke:#db2777,stroke-width:2px,color:#831843
+    style G fill:#d1fae5,stroke:#059669,stroke-width:2px,color:#064e3b
+```
+
+## Overview Materi {.unnumbered}
+
+::: {.chapter-grid}
+
+::: {.chapter-card}
+### 1. Foundations
+Mengapa sampling? Populasi vs. sampling frame. Sampling error vs. non-sampling error. Total Survey Error (TSE) framework. Bias-variance trade-off.
+
+[Mulai Belajar →](01-foundations.qmd)
+:::
+
+::: {.chapter-card}
+### 2. Probability Sampling
+Simple Random Sampling, Systematic, Stratified, Cluster, dan PPS. Estimator, variance, dan perbandingan presisi antar metode.
+
+[Mulai Belajar →](02-probability.qmd)
+:::
+
+::: {.chapter-card}
+### 3. Non-Probability Sampling
+Convenience, purposive, quota, snowball, dan Respondent-Driven Sampling (RDS). Kapan justified dan bagaimana mitigasi bias.
+
+[Mulai Belajar →](03-nonprobability.qmd)
+:::
+
+::: {.chapter-card}
+### 4. Complex Designs
+Multi-stage sampling, stratified cluster designs, Design Effect (DEFF), dan metode estimasi varians: TSL, BRR, JRR, Bootstrap.
+
+[Mulai Belajar →](04-complex.qmd)
+:::
+
+::: {.chapter-card}
+### 5. Sample Size Determination
+Dari formula dasar hingga power analysis, Bayesian sample size, dan pendekatan untuk machine learning. Interactive calculator included.
+
+[Mulai Belajar →](05-sample-size.qmd)
+:::
+
+::: {.chapter-card}
+### 6. Weighting & DEFF
+Base weight, non-response adjustment, calibration/raking, weight trimming, dan diagnostik. Effective sample size setelah weighting.
+
+[Mulai Belajar →](06-weighting.qmd)
+:::
+
+::: {.chapter-card}
+### 7. Practical Guide
+Decision flowchart, checklist sebelum sampling, common mistakes, dan case study end-to-end: survei kepuasan pelanggan bank.
+
+[Mulai Belajar →](07-practical.qmd)
+:::
+
+:::
+
+## Prerequisites {.unnumbered}
+
+::: {.callout-note}
+## Apa yang perlu dikuasai sebelum memulai?
+
+- **Statistika dasar:** distribusi, mean, varians, confidence interval, hypothesis testing.
+- **R atau Python:** kemampuan dasar manipulasi data dan visualisasi. Materi menyediakan code dalam kedua bahasa.
+- **Konsep probabilitas:** pemahaman dasar teori probabilitas dan distribusi sampling.
+- **Linear algebra (opsional):** membantu untuk memahami derivasi pada bab lanjut.
+:::
+
+::: {.callout-tip}
+## Kapan teknik sampling penting vs. bisa diabaikan?
+
+**Sampling PENTING ketika:**
+
+- Populasi terlalu besar/mahal untuk diteliti seluruhnya (sensus)
+- Pengujian bersifat destruktif (quality control)
+- Membutuhkan hasil cepat dengan sumber daya terbatas
+- Perlu estimasi parameter dengan presisi yang terukur
+
+**Sampling BISA DIABAIKAN ketika:**
+
+- Populasi kecil dan mudah dijangkau → lakukan **sensus**
+- Data sudah tersedia secara lengkap (administrative data, log data)
+- Analisis big data di mana seluruh data bisa diproses
+- Tujuan hanya eksplorasi/deskriptif tanpa perlu inferensi ke populasi
+:::
+
+## Dataset Simulasi {.unnumbered}
+
+Seluruh materi menggunakan dataset populasi simulasi yang konsisten: **10.000 rumah tangga** dengan variabel:
+
+| Variabel | Deskripsi | Tipe |
+|----------|-----------|------|
+| `household_id` | ID rumah tangga | Integer |
+| `province` | Provinsi (10 provinsi) | Kategorikal |
+| `district` | Kabupaten/Kota | Kategorikal |
+| `urban_rural` | Urban / Rural | Binary |
+| `region` | Wilayah besar (Jawa, Sumatera, dll.) | Kategorikal |
+| `income` | Pendapatan rumah tangga (Rp/bulan) | Kontinu |
+| `expenditure` | Pengeluaran rumah tangga (Rp/bulan) | Kontinu |
+| `household_size` | Jumlah anggota rumah tangga | Diskrit |
+| `education` | Pendidikan kepala rumah tangga | Ordinal |
+| `satisfaction` | Skor kepuasan (1–5) | Ordinal |
+| `has_internet` | Akses internet (0/1) | Binary |
+| `num_children` | Jumlah anak | Diskrit |
+
+## Konvensi Notasi {.unnumbered}
+
+Seluruh materi menggunakan notasi konsisten berikut:
+
+| Simbol | Makna |
+|--------|-------|
+| $N$ | Ukuran populasi |
+| $n$ | Ukuran sampel |
+| $Y_i$ | Nilai variabel untuk unit ke-$i$ |
+| $\bar{Y}$ | Population mean |
+| $\bar{y}$ | Sample mean |
+| $S^2$ | Population variance |
+| $s^2$ | Sample variance |
+| $\hat{\theta}$ | Estimator dari parameter $\theta$ |
+| $\text{Var}(\hat{\theta})$ | Variance of estimator |
+| $\text{MSE}(\hat{\theta})$ | Mean Squared Error |
+| $\text{DEFF}$ | Design Effect |
+| $f = n/N$ | Sampling fraction |
+
+## Referensi Utama {.unnumbered}
+
+Materi ini didasarkan pada referensi berikut:
+
+1. @cochran1977 — *Sampling Techniques* (edisi ke-3)
+2. @lohr2021 — *Sampling: Design and Analysis* (edisi ke-3)
+3. @thompson2012 — *Sampling* (edisi ke-3)
+4. @kish1965 — *Survey Sampling*
+5. @levy2008 — *Sampling of Populations*
+6. @lumley2010 — *Complex Surveys: A Guide to Analysis Using R*

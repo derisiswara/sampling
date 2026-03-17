@@ -1,0 +1,65 @@
+project:
+  type: website
+  output-dir: docs
+
+website:
+  title: "Sampling Techniques & Sample Size Determination"
+  navbar:
+    background: dark
+    left:
+      - href: index.qmd
+        text: Home
+      - text: "Techniques"
+        menu:
+          - href: 01-foundations.qmd
+            text: "1. Foundations"
+          - href: 02-probability.qmd
+            text: "2. Probability Sampling"
+          - href: 03-nonprobability.qmd
+            text: "3. Non-Probability Sampling"
+          - href: 04-complex.qmd
+            text: "4. Complex Designs"
+      - text: "Sample Size"
+        menu:
+          - href: 05-sample-size.qmd
+            text: "5. Size Determination"
+          - href: 06-weighting.qmd
+            text: "6. Weighting & DEFF"
+      - href: 07-practical.qmd
+        text: "Practical Guide"
+    tools:
+      - icon: github
+        href: https://github.com/USERNAME/sampling-guide
+  sidebar:
+    style: floating
+    search: true
+  page-footer:
+    center: "Built with Quarto | Sampling Guide for Practitioners"
+
+format:
+  html:
+    theme:
+      light: cosmo
+      dark: darkly
+    css: styles.css
+    toc: true
+    toc-depth: 3
+    toc-title: "Daftar Isi"
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    code-copy: true
+    code-overflow: wrap
+    highlight-style: github
+    fig-responsive: true
+    smooth-scroll: true
+
+execute:
+  echo: true
+  warning: false
+  message: false
+  freeze: auto
+
+bibliography: references.bib
+csl: apa.csl
+lang: id

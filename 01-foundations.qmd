@@ -1,0 +1,375 @@
+---
+title: "Fondasi Sampling"
+subtitle: "Mengapa sampling, framework konseptual, dan konsep-konsep kunci"
+---
+
+```{r}
+#| label: setup
+#| include: false
+source("_common.R")
+pop <- load_population()
+```
+
+## Mengapa Sampling?
+
+Sampling bukan sekadar "mengambil sebagian data" — ia adalah **framework inferensial** yang memungkinkan kita membuat pernyataan tentang populasi berdasarkan subset yang jauh lebih kecil. Tiga argumen utama:
+
+1. **Biaya & waktu.** Sensus Penduduk Indonesia (SP2020) membutuhkan anggaran triliunan rupiah dan ratusan ribu petugas. Survei sampel seperti SUSENAS mencakup ~300.000 rumah tangga dari ~70 juta — cukup untuk estimasi hingga level kabupaten.
+
+2. **Akurasi.** Paradoks: sampel yang dirancang baik sering **lebih akurat** daripada sensus. Sensus rentan terhadap non-sampling error (pelatihan petugas yang tidak merata, kelelahan, data entry error) yang terakumulasi pada skala besar [@cochran1977].
+
+3. **Feasibility.** Beberapa pengukuran bersifat destruktif (uji kualitas produk) atau populasi tidak terjangkau seluruhnya (hidden populations).
+
+::: {.callout-note}
+## Prinsip Fundamental
+Kualitas sampel ditentukan oleh **desain**, bukan hanya **ukuran**. Sampel 1.000 yang dirancang baik mengalahkan sampel 100.000 yang convenience-based — sebagaimana ditunjukkan oleh kegagalan *Literary Digest* poll 1936 (n = 2.4 juta) vs. keberhasilan Gallup poll (n = 50.000).
+:::
+
+## Populasi, Sampling Frame, dan Coverage Error
+
+### Hierarki Konseptual
+
+```{mermaid}
+%%| fig-width: 7
+%%| label: fig-population-hierarchy
+flowchart TD
+    A["<b>Target Population</b><br/>Populasi yang ingin dipelajari"] --> B["<b>Study Population</b><br/>Populasi yang dapat dijangkau"]
+    B --> C["<b>Sampling Frame</b><br/>Daftar unit yang bisa dipilih"]
+    C --> D["<b>Sample</b><br/>Unit yang terpilih"]
+    D --> E["<b>Respondents</b><br/>Unit yang merespons"]
+
+    style A fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+    style B fill:#e0e7ff,stroke:#4f46e5,stroke-width:2px
+    style C fill:#ede9fe,stroke:#7c3aed,stroke-width:2px
+    style D fill:#fce7f3,stroke:#db2777,stroke-width:2px
+    style E fill:#fef3c7,stroke:#d97706,stroke-width:2px
+```
+
+### Definisi
+
+- **Target population:** seluruh unit yang menjadi subjek inferensi. *Contoh:* seluruh rumah tangga di Indonesia.
+- **Study population:** subset target population yang secara praktis dapat dijangkau. *Contoh:* rumah tangga yang tinggal di wilayah yang aman dan accessible.
+- **Sampling frame:** daftar operasional dari mana sampel ditarik. *Contoh:* daftar blok sensus SP2020 (BPS), daftar nasabah aktif bank, database nomor telepon.
+
+### Coverage Error
+
+**Coverage error** = perbedaan antara target population dan sampling frame:
+
+- **Undercoverage:** unit di populasi tidak ada di frame. *Contoh:* rumah tangga baru yang belum tercatat di SP2020; pelanggan baru yang belum masuk database.
+- **Overcoverage:** unit di frame bukan bagian dari populasi. *Contoh:* rumah tangga yang sudah pindah/meninggal tapi masih tercatat.
+- **Duplikasi:** unit muncul >1 kali di frame.
+
+::: {.callout-warning}
+## Pitfall
+Coverage error adalah salah satu sumber bias paling berbahaya karena **tidak bisa dideteksi dari data sampel** — kita tidak tahu apa yang tidak kita ketahui. Selalu evaluasi kualitas frame sebelum mendesain survei.
+:::
+
+### Contoh Sampling Frame di Indonesia
+
+| Survei | Frame | Sumber | Potensi Coverage Error |
+|--------|-------|--------|----------------------|
+| SUSENAS | Blok sensus SP2020 | BPS | Wilayah baru, permukiman informal |
+| Survei pelanggan bank | Database CIF | Internal bank | Nasabah dormant, joint accounts |
+| Political polling | Daftar nomor telepon | Provider telco | Exclude non-phone users (bias urban) |
+| Online survey | Panel respondent | Platform survei | Self-selection, exclude offline population |
+
+## Konsep Kunci
+
+### Sampling Error vs. Non-Sampling Error
+
+::: {.column-margin}
+Sampling error **menurun** dengan bertambahnya $n$. Non-sampling error bisa **meningkat** seiring bertambahnya $n$ jika quality control memburuk.
+:::
+
+**Sampling error** adalah variabilitas estimasi yang timbul karena kita hanya mengobservasi sebagian populasi. Jika kita mengambil sampel berbeda, kita mendapat estimasi berbeda — variabilitas inilah sampling error.
+
+**Non-sampling error** mencakup semua error lainnya:
+
+- *Measurement error:* responden salah paham pertanyaan
+- *Processing error:* salah input data
+- *Non-response error:* responden menolak/tidak bisa dihubungi
+- *Coverage error:* frame tidak mencakup populasi
+
+### Bias vs. Variance Trade-off
+
+Untuk estimator $\hat{\theta}$ dari parameter $\theta$:
+
+$$
+\text{MSE}(\hat{\theta}) = \text{Bias}^2(\hat{\theta}) + \text{Var}(\hat{\theta})
+$$ {#eq-mse}
+
+di mana:
+
+- $\text{Bias}(\hat{\theta}) = E[\hat{\theta}] - \theta$
+- $\text{Var}(\hat{\theta}) = E[(\hat{\theta} - E[\hat{\theta}])^2]$
+
+Estimator yang **unbiased** memiliki $E[\hat{\theta}] = \theta$, sehingga $\text{MSE} = \text{Var}$. Namun dalam praktik, sedikit bias kadang bisa diterima jika menghasilkan penurunan varians yang substansial.
+
+### Parameter, Estimator, Estimate
+
+| Konsep | Definisi | Contoh |
+|--------|----------|--------|
+| **Parameter** ($\theta$) | Nilai tetap (unknown) di populasi | $\bar{Y} = \frac{1}{N}\sum_{i=1}^N Y_i$ |
+| **Estimator** ($\hat{\theta}$) | Fungsi dari data sampel (random variable) | $\bar{y} = \frac{1}{n}\sum_{i=1}^n y_i$ |
+| **Estimate** | Nilai numerik spesifik dari estimator | $\bar{y} = 4{,}250{,}000$ |
+
+### Margin of Error dan Confidence Interval
+
+**Margin of Error (MoE)** pada level kepercayaan $(1-\alpha)$:
+
+$$
+\text{MoE} = z_{1-\alpha/2} \times \text{SE}(\hat{\theta})
+$$ {#eq-moe}
+
+**Confidence Interval:**
+
+$$
+\text{CI}_{1-\alpha} = \hat{\theta} \pm \text{MoE}
+$$ {#eq-ci}
+
+::: {.callout-tip}
+## Interpretasi yang Benar
+CI 95% **bukan** berarti "ada probabilitas 95% parameter ada di interval ini." Interpretasi yang benar: jika kita mengulangi prosedur sampling berkali-kali, **95% dari interval** yang dihasilkan akan mengandung parameter sebenarnya.
+:::
+
+## Total Survey Error (TSE) Framework
+
+TSE framework [@groves2009] mengorganisir semua sumber error dalam survei menjadi dua dimensi:
+
+```{mermaid}
+%%| fig-width: 8
+%%| label: fig-tse
+flowchart LR
+    subgraph Representation["<b>Representation</b>"]
+        direction TB
+        R1["Coverage Error"] --> R2["Sampling Error"]
+        R2 --> R3["Non-response Error"]
+        R3 --> R4["Adjustment Error"]
+    end
+
+    subgraph Measurement["<b>Measurement</b>"]
+        direction TB
+        M1["Validity<br/>(construct vs. measure)"] --> M2["Measurement Error<br/>(respondent, instrument)"]
+        M2 --> M3["Processing Error<br/>(coding, data entry)"]
+    end
+
+    Representation --> |"Interact"| Measurement
+
+    style Representation fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+    style Measurement fill:#fef3c7,stroke:#d97706,stroke-width:2px
+```
+
+**Point penting:** Sampling error (yang bisa dihitung dari data) hanyalah **satu komponen kecil** dari total error. Fokus berlebihan pada sampling error (memperbesar $n$) sementara mengabaikan non-sampling error adalah kesalahan umum.
+
+## Simulasi: Central Limit Theorem dan Sampling Distribution
+
+Kita akan mendemonstrasikan bahwa distribusi sampling mean mendekati normal seiring bertambahnya $n$, bahkan ketika distribusi populasi sangat skewed.
+
+::: {.panel-tabset}
+
+### R
+
+```{r}
+#| label: fig-clt-demo
+#| fig-cap: "Distribusi sampling mean untuk berbagai ukuran sampel. Populasi income berdistribusi right-skewed (log-normal), namun distribusi $\\bar{y}$ mendekati normal seiring bertambahnya n."
+#| fig-width: 10
+#| fig-height: 7
+
+set.seed(2024)
+true_mean <- mean(pop$income)
+sample_sizes <- c(10, 30, 100, 500)
+B <- 2000
+
+sim_results <- map_dfr(sample_sizes, function(n) {
+  means <- replicate(B, mean(sample(pop$income, n)))
+  tibble(n = paste0("n = ", n), sample_mean = means)
+}) |>
+  mutate(n = factor(n, levels = paste0("n = ", sample_sizes)))
+
+ggplot(sim_results, aes(x = sample_mean)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 50,
+                 fill = "#2563eb", alpha = 0.6, color = "white") +
+  geom_density(color = "#dc2626", linewidth = 0.8) +
+  geom_vline(xintercept = true_mean, linetype = "dashed",
+             color = "#059669", linewidth = 0.7) +
+  facet_wrap(~n, scales = "free_y", ncol = 2) +
+  labs(
+    title = "Central Limit Theorem: Distribusi Sampling Mean",
+    subtitle = paste0("Populasi: income (N = ", nrow(pop),
+                      ", μ = ", format(round(true_mean), big.mark = ","), ")"),
+    x = "Sample Mean (Income)",
+    y = "Density"
+  ) +
+  scale_x_continuous(labels = label_comma()) +
+  annotate("text", x = Inf, y = Inf, label = "— True μ",
+           hjust = 1.1, vjust = 1.5, color = "#059669", size = 3.5)
+```
+
+### Python
+
+```{python}
+#| label: fig-clt-demo-py
+#| fig-cap: "Distribusi sampling mean untuk berbagai ukuran sampel (Python implementation)."
+#| fig-width: 10
+#| fig-height: 7
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+
+np.random.seed(2024)
+
+pop_py = r.pop  # access R dataframe
+income = pop_py['income'].values
+true_mean = income.mean()
+
+sample_sizes = [10, 30, 100, 500]
+B = 2000
+
+fig, axes = plt.subplots(2, 2, figsize=(10, 7))
+axes = axes.flatten()
+
+for idx, n in enumerate(sample_sizes):
+    means = [np.mean(np.random.choice(income, size=n, replace=False))
+             for _ in range(B)]
+    ax = axes[idx]
+    ax.hist(means, bins=50, density=True, alpha=0.6, color='#2563eb',
+            edgecolor='white')
+    ax.axvline(true_mean, linestyle='--', color='#059669', linewidth=1.2,
+               label=f'True μ = {true_mean:,.0f}')
+    ax.set_title(f'n = {n}', fontweight='bold')
+    ax.set_xlabel('Sample Mean (Income)')
+    ax.set_ylabel('Density')
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(
+        lambda x, p: f'{x:,.0f}'))
+    ax.legend(fontsize=8)
+
+fig.suptitle('Central Limit Theorem: Distribusi Sampling Mean',
+             fontweight='bold', fontsize=13)
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+## Sampling Error vs. Sample Size
+
+Hubungan antara sampling error dan ukuran sampel bersifat **diminishing returns** — peningkatan presisi melambat seiring bertambahnya $n$.
+
+::: {.panel-tabset}
+
+### R
+
+```{r}
+#| label: fig-se-vs-n
+#| fig-cap: "Standard Error menurun proporsional dengan $1/\\sqrt{n}$. Perhatikan diminishing returns: dari n=30 ke n=100 jauh lebih impactful daripada dari n=500 ke n=1000."
+#| fig-width: 8
+#| fig-height: 5
+
+set.seed(2024)
+n_values <- c(10, 20, 30, 50, 100, 200, 300, 500, 750, 1000)
+B <- 2000
+
+se_sim <- map_dfr(n_values, function(n) {
+  means <- replicate(B, mean(sample(pop$income, n)))
+  tibble(n = n, se_empirical = sd(means))
+})
+
+pop_sd <- sd(pop$income)
+se_sim <- se_sim |>
+  mutate(se_theoretical = pop_sd / sqrt(n))
+
+ggplot(se_sim, aes(x = n)) +
+  geom_point(aes(y = se_empirical, color = "Empirical (simulasi)"),
+             size = 3) +
+  geom_line(aes(y = se_theoretical, color = "Theoretical (σ/√n)"),
+            linewidth = 1) +
+  scale_color_manual(values = c("Empirical (simulasi)" = "#2563eb",
+                                "Theoretical (σ/√n)" = "#dc2626")) +
+  scale_x_continuous(breaks = n_values) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    title = "Standard Error vs. Sample Size",
+    subtitle = "SE menurun proporsional dengan 1/√n — diminishing returns",
+    x = "Sample Size (n)",
+    y = "Standard Error of Mean",
+    color = NULL
+  )
+```
+
+### Python
+
+```{python}
+#| label: fig-se-vs-n-py
+#| fig-cap: "Standard Error vs. Sample Size (Python implementation)."
+#| fig-width: 8
+#| fig-height: 5
+
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+
+np.random.seed(2024)
+
+income = r.pop['income'].values
+pop_sd = income.std(ddof=0)
+
+n_values = [10, 20, 30, 50, 100, 200, 300, 500, 750, 1000]
+B = 2000
+
+se_empirical = []
+for n in n_values:
+    means = [np.mean(np.random.choice(income, size=n, replace=False))
+             for _ in range(B)]
+    se_empirical.append(np.std(means, ddof=1))
+
+se_theoretical = [pop_sd / np.sqrt(n) for n in n_values]
+
+fig, ax = plt.subplots(figsize=(8, 5))
+ax.scatter(n_values, se_empirical, color='#2563eb', s=60, zorder=5,
+           label='Empirical (simulasi)')
+ax.plot(n_values, se_theoretical, color='#dc2626', linewidth=1.5,
+        label='Theoretical (σ/√n)')
+ax.set_xlabel('Sample Size (n)')
+ax.set_ylabel('Standard Error of Mean')
+ax.set_title('Standard Error vs. Sample Size', fontweight='bold')
+ax.legend()
+ax.yaxis.set_major_formatter(mticker.FuncFormatter(
+    lambda x, p: f'{x:,.0f}'))
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+::: {.callout-note}
+## Implikasi Praktis
+Menggandakan presisi (mengurangi SE menjadi setengah) membutuhkan **empat kali lipat** ukuran sampel ($n \propto 1/\text{SE}^2$). Ini adalah alasan utama mengapa penentuan ukuran sampel harus berbasis perhitungan — bukan sekadar "ambil sebanyak mungkin."
+:::
+
+::: {.takeaways}
+### Key Takeaways
+
+1. **Kualitas sampling ditentukan oleh desain, bukan hanya ukuran.** Sampel kecil yang well-designed mengalahkan sampel besar yang biased.
+2. **Sampling error hanyalah satu komponen** dari Total Survey Error. Non-sampling error (coverage, non-response, measurement) sering lebih besar dan lebih sulit dikendalikan.
+3. **Sampling frame adalah titik kritis** — gap antara frame dan target population menghasilkan coverage error yang tidak terdeteksi dari data.
+4. **Standard error menurun proporsional dengan $1/\sqrt{n}$** — ada diminishing returns. Perhitungan formal sample size diperlukan untuk menentukan titik optimal.
+5. **CLT menjamin** distribusi sampling mean mendekati normal untuk $n$ yang cukup besar, memungkinkan konstruksi CI dan hypothesis testing.
+:::
+
+::: {.exercises}
+### Exercises
+
+1. **Coverage error analysis.** Anda diminta mendesain survei kepuasan pelanggan e-commerce. Frame yang tersedia: database email pelanggan yang pernah bertransaksi dalam 12 bulan terakhir. Identifikasi potensi undercoverage dan overcoverage. Bagaimana dampaknya terhadap estimasi, dan apa mitigasinya?
+
+2. **Bias-variance simulation.** Modifikasi simulasi CLT di atas: alih-alih SRS, gunakan sampling yang hanya mengambil rumah tangga urban. Hitung bias dan MSE dari estimator mean income, dan bandingkan dengan SRS. Apa pelajarannya?
+
+3. **TSE decomposition.** Sebuah survei telepon memiliki response rate 40%. Diskusikan komponen TSE mana saja yang kemungkinan besar berkontribusi pada total error, dan urutkan dari yang paling berpengaruh.
+:::
+
+### Further Reading
+
+- @groves2009, Chapter 2: Total Survey Error framework secara lengkap.
+- @lohr2021, Chapter 1-2: Fondasi sampling dengan contoh modern.
+- @cochran1977, Chapter 1: Argumen klasik tentang mengapa sampling bekerja.

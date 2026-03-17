@@ -1,0 +1,445 @@
+---
+title: "Non-Probability Sampling"
+subtitle: "Convenience, purposive, quota, snowball, RDS, dan model-based inference"
+---
+
+```{r}
+#| label: setup
+#| include: false
+source("_common.R")
+pop <- load_population()
+N <- nrow(pop)
+```
+
+Non-probability sampling terjadi ketika probabilitas inklusi unit tidak diketahui atau nol untuk sebagian populasi. Meski tidak memungkinkan inferensi berbasis desain klasik, metode ini sering menjadi satu-satunya opsi yang feasible — dan pendekatan modern memungkinkan mitigasi bias melalui model-based adjustment [@elliott2017].
+
+## Convenience Sampling
+
+### Definisi & Mekanisme
+
+Sampel diambil dari unit yang **paling mudah diakses**: pengunjung mall, mahasiswa di kelas, follower media sosial, responden panel online sukarela.
+
+### Bias yang Muncul
+
+- **Selection bias:** unit yang mudah diakses sistematik berbeda dari populasi
+- **Self-selection bias:** yang bersedia berpartisipasi berbeda dari yang menolak
+- **Coverage bias:** hanya menjangkau subpopulasi tertentu
+
+### Kapan Justified?
+
+- **Pilot testing:** menguji instrumen survei sebelum survei formal
+- **Exploratory research:** generating hypotheses, bukan estimasi parameter
+- **UX testing:** usability test di mana generalizability bukan tujuan utama
+- **Resource constraints:** ketika budget/waktu sangat terbatas dan awareness bias didokumentasikan
+
+::: {.callout-warning}
+## Pitfall Umum
+Convenience sampling **tidak** menjadi lebih valid hanya karena ukuran sampel besar. Sampel 100.000 dari pengunjung website tetap biased jika populasi target adalah seluruh pelanggan — termasuk yang tidak online.
+:::
+
+## Purposive / Judgmental Sampling
+
+### Definisi & Mekanisme
+
+Peneliti secara **sengaja** memilih unit berdasarkan pengetahuan/judgment tentang populasi. Variasi:
+
+- **Expert sampling:** memilih informan kunci yang paling berpengetahuan
+- **Maximum variation:** memilih kasus yang paling berbeda untuk memahami range fenomena
+- **Homogeneous sampling:** memilih kasus serupa untuk studi mendalam
+- **Typical case sampling:** memilih kasus "rata-rata" atau tipikal
+
+### Kapan Justified?
+
+- **Qualitative research:** di mana depth > breadth
+- **Rare populations:** ketika frame tidak tersedia
+- **Policy evaluation:** site selection untuk program evaluation
+- **Mixed methods:** complementing probability survey dengan case studies
+
+## Quota Sampling
+
+### Definisi & Mekanisme
+
+Populasi dibagi ke dalam kategori (quota), lalu interviewer diminta mengisi kuota masing-masing. **Bedanya dengan stratified sampling:** cara pemilihan unit dalam kuota bersifat non-random (discretion pewawancara).
+
+| Aspek | Stratified Sampling | Quota Sampling |
+|-------|-------------------|----------------|
+| Pembagian strata/kuota | ✅ | ✅ |
+| Random selection dalam strata | ✅ | ❌ |
+| Known $\pi_i$ | ✅ | ❌ |
+| Kontrol distribusi variabel | ✅ | Parsial |
+| Potensi selection bias | Minimal | Signifikan |
+
+### Contoh Studi
+
+Market research menggunakan quota: "Interview 200 orang, pastikan 50% pria, 30% usia <30, 20% usia >50." Pewawancara memilih siapa yang diwawancara — memperkenalkan bias (cenderung memilih yang kooperatif, accessible, non-threatening).
+
+## Snowball Sampling
+
+### Definisi & Mekanisme
+
+Mulai dari seed/initial respondents, minta mereka merujuk orang lain yang memenuhi kriteria. Proses berlanjut iteratif (wave/chain).
+
+### Kapan Satu-satunya Opsi?
+
+**Hidden populations** — populasi yang sulit dijangkau melalui frame konvensional:
+
+- Pengguna narkoba (UNODC surveys)
+- Sex workers (HIV surveillance)
+- Undocumented migrants
+- Rare disease patients
+- Underground communities
+
+### Bias yang Muncul
+
+- **Initial seed bias:** komposisi sampel sangat dipengaruhi oleh seed awal
+- **Network homophily:** orang cenderung merujuk yang mirip diri sendiri
+- **Voluntarism bias:** yang bersedia berpartisipasi dan merujuk berbeda dari yang menolak
+- **Masking:** beberapa subgroup mungkin tidak terjangkau karena terisolasi dari jaringan utama
+
+## Respondent-Driven Sampling (RDS)
+
+### Konsep
+
+RDS [@heckathorn1997; @heckathorn2002] adalah "improved snowball" yang menambahkan **basis probabilistik**:
+
+1. Seed yang dipilih secara purposive memulai chain
+2. Setiap responden hanya boleh merujuk sejumlah tetap (biasanya 3) orang
+3. **Dual incentive:** kompensasi untuk berpartisipasi DAN untuk setiap referral yang berhasil
+4. Data tentang **network size** (derajat) dikumpulkan dari setiap responden
+5. Estimator RDS meng-adjust untuk network size → approximation terhadap probability sampling
+
+### RDS Estimator
+
+$$
+\hat{\mu}_{RDS-II} = \frac{\sum_{i=1}^n y_i / d_i}{\sum_{i=1}^n 1/d_i}
+$$ {#eq-rds}
+
+di mana $d_i$ = network size (derajat) responden $i$. Inverse network size berperan sebagai **weight** — responden dengan jaringan besar diberi bobot lebih kecil karena mereka over-represented.
+
+::: {.callout-note}
+## Asumsi RDS
+
+1. Populasi membentuk satu komponen jaringan terhubung
+2. Sampling with replacement (atau populasi cukup besar)
+3. Random recruitment dari network masing-masing
+4. Responden melaporkan network size dengan akurat
+5. Chain cukup panjang untuk mencapai equilibrium (convergence)
+
+Pelanggaran asumsi ini (terutama #3 dan #5) sering terjadi di lapangan, menghasilkan bias substansial.
+:::
+
+## Simulasi: Bias dari Convenience Sampling vs. SRS
+
+::: {.panel-tabset}
+
+### R
+
+```{r}
+#| label: fig-conv-bias
+#| fig-cap: "Convenience sampling yang bias terhadap populasi urban menghasilkan estimasi mean income yang systematically higher."
+#| fig-width: 10
+#| fig-height: 6
+
+set.seed(2024)
+B <- 1000
+n_sim <- 200
+true_mean <- mean(pop$income)
+
+# SRS
+srs_est <- replicate(B, mean(sample(pop$income, n_sim)))
+
+# Convenience: 80% urban, 20% rural (vs population ~50/50)
+conv_est <- replicate(B, {
+  n_urban <- round(n_sim * 0.80)
+  n_rural <- n_sim - n_urban
+  urban_samp <- sample(pop$income[pop$urban_rural == "Urban"], n_urban)
+  rural_samp <- sample(pop$income[pop$urban_rural == "Rural"], n_rural)
+  mean(c(urban_samp, rural_samp))
+})
+
+# Convenience: only high education
+conv_edu_est <- replicate(B, {
+  eligible <- pop |> filter(education %in% c("S1", "S2+"))
+  mean(sample(eligible$income, min(n_sim, nrow(eligible))))
+})
+
+sim_df <- tibble(
+  estimate = c(srs_est, conv_est, conv_edu_est),
+  method = rep(c("SRS (unbiased)",
+                 "Convenience (urban-biased)",
+                 "Convenience (edu-biased)"), each = B)
+)
+
+ggplot(sim_df, aes(x = estimate, fill = method)) +
+  geom_histogram(bins = 50, alpha = 0.6, position = "identity") +
+  geom_vline(xintercept = true_mean, linetype = "dashed",
+             color = "red", linewidth = 0.8) +
+  facet_wrap(~method, ncol = 1, scales = "free_y") +
+  scale_x_continuous(labels = label_comma()) +
+  scale_fill_manual(values = c("SRS (unbiased)" = "#2563eb",
+                               "Convenience (urban-biased)" = "#d97706",
+                               "Convenience (edu-biased)" = "#dc2626")) +
+  labs(
+    title = "SRS vs Convenience Sampling: Bias Comparison",
+    subtitle = "Garis merah putus-putus = true population mean μ",
+    x = "Estimated Mean Income", y = "Count", fill = NULL
+  ) +
+  theme(legend.position = "none")
+```
+
+```{r}
+#| label: tbl-bias-comparison
+#| tbl-cap: "Perbandingan bias, variance, dan MSE: SRS vs Convenience Sampling."
+
+tibble(
+  Method = c("SRS", "Convenience (urban-biased)", "Convenience (edu-biased)"),
+  `E[ȳ]` = c(mean(srs_est), mean(conv_est), mean(conv_edu_est)),
+  Bias = c(mean(srs_est), mean(conv_est), mean(conv_edu_est)) - true_mean,
+  Variance = c(var(srs_est), var(conv_est), var(conv_edu_est)),
+  MSE = c(mean((srs_est - true_mean)^2),
+          mean((conv_est - true_mean)^2),
+          mean((conv_edu_est - true_mean)^2))
+) |>
+  mutate(across(where(is.numeric), ~format(round(.), big.mark = ","))) |>
+  gt() |>
+  tab_header(title = "Bias & MSE Comparison")
+```
+
+### Python
+
+```{python}
+#| label: fig-conv-bias-py
+#| fig-cap: "Convenience sampling bias simulation (Python)."
+#| fig-width: 10
+#| fig-height: 6
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+
+np.random.seed(2024)
+pop_py = r.pop.copy()
+income = pop_py['income'].values
+urban_mask = pop_py['urban_rural'].values == 'Urban'
+true_mean = income.mean()
+B = 1000
+n_sim = 200
+
+# SRS
+srs_est = [np.mean(np.random.choice(income, n_sim, replace=False))
+           for _ in range(B)]
+
+# Convenience: 80% urban
+conv_est = []
+urban_inc = income[urban_mask]
+rural_inc = income[~urban_mask]
+for _ in range(B):
+    n_u = int(n_sim * 0.8)
+    n_r = n_sim - n_u
+    s = np.concatenate([
+        np.random.choice(urban_inc, n_u, replace=False),
+        np.random.choice(rural_inc, n_r, replace=False)
+    ])
+    conv_est.append(s.mean())
+
+fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+
+axes[0].hist(srs_est, bins=50, alpha=0.6, color='#2563eb', label='SRS')
+axes[0].axvline(true_mean, linestyle='--', color='red', linewidth=1.2)
+axes[0].set_title('SRS (unbiased)', fontweight='bold')
+axes[0].set_ylabel('Count')
+
+axes[1].hist(conv_est, bins=50, alpha=0.6, color='#d97706',
+             label='Convenience (urban-biased)')
+axes[1].axvline(true_mean, linestyle='--', color='red', linewidth=1.2)
+axes[1].set_title('Convenience (urban-biased)', fontweight='bold')
+axes[1].set_xlabel('Estimated Mean Income')
+axes[1].set_ylabel('Count')
+
+for ax in axes:
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(
+        lambda x, p: f'{x:,.0f}'))
+
+plt.suptitle(f'Bias dari Convenience Sampling (true μ = {true_mean:,.0f})',
+             fontweight='bold', y=1.02)
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+## Coverage Bias Illustration
+
+::: {.panel-tabset}
+
+### R
+
+```{r}
+#| label: fig-coverage-bias
+#| fig-cap: "Coverage bias: distribusi income untuk populasi yang terjangkau vs tidak terjangkau oleh sampling frame."
+#| fig-width: 9
+#| fig-height: 5
+
+# Simulate a frame that misses rural + low-education households
+pop_coverage <- pop |>
+  mutate(
+    in_frame = case_when(
+      urban_rural == "Urban" ~ rbinom(n(), 1, 0.90),
+      education %in% c("S1", "S2+") ~ rbinom(n(), 1, 0.80),
+      TRUE ~ rbinom(n(), 1, 0.45)
+    ) == 1
+  )
+
+coverage_rate <- mean(pop_coverage$in_frame)
+frame_mean <- mean(pop_coverage$income[pop_coverage$in_frame])
+pop_mean_true <- mean(pop_coverage$income)
+
+ggplot(pop_coverage, aes(x = income, fill = in_frame)) +
+  geom_histogram(bins = 50, alpha = 0.6, position = "identity") +
+  scale_fill_manual(values = c("TRUE" = "#2563eb", "FALSE" = "#dc2626"),
+                    labels = c("TRUE" = "In Frame", "FALSE" = "Not in Frame")) +
+  geom_vline(xintercept = frame_mean, linetype = "solid",
+             color = "#2563eb", linewidth = 0.8) +
+  geom_vline(xintercept = pop_mean_true, linetype = "dashed",
+             color = "#dc2626", linewidth = 0.8) +
+  scale_x_continuous(labels = label_comma()) +
+  labs(
+    title = "Coverage Bias: Frame vs Population",
+    subtitle = sprintf("Coverage rate = %.1f%% | Frame mean = %s | True mean = %s | Bias = %s",
+                       coverage_rate * 100,
+                       format(round(frame_mean), big.mark = ","),
+                       format(round(pop_mean_true), big.mark = ","),
+                       format(round(frame_mean - pop_mean_true), big.mark = ",")),
+    x = "Income", y = "Count", fill = "Status"
+  )
+```
+
+### Python
+
+```{python}
+#| label: fig-coverage-bias-py
+#| fig-cap: "Coverage bias illustration (Python)."
+#| fig-width: 9
+#| fig-height: 5
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+
+np.random.seed(2024)
+pop_py = r.pop.copy()
+
+# Simulate frame
+prob_in_frame = np.where(
+    pop_py['urban_rural'] == 'Urban', 0.90,
+    np.where(pop_py['education'].isin(['S1', 'S2+']), 0.80, 0.45)
+)
+in_frame = np.random.binomial(1, prob_in_frame).astype(bool)
+
+income = pop_py['income'].values
+frame_mean = income[in_frame].mean()
+true_mean = income.mean()
+
+fig, ax = plt.subplots(figsize=(9, 5))
+ax.hist(income[in_frame], bins=50, alpha=0.5, color='#2563eb',
+        label=f'In Frame (mean={frame_mean:,.0f})')
+ax.hist(income[~in_frame], bins=50, alpha=0.5, color='#dc2626',
+        label=f'Not in Frame')
+ax.axvline(true_mean, linestyle='--', color='red', linewidth=1.2,
+           label=f'True μ = {true_mean:,.0f}')
+ax.axvline(frame_mean, linestyle='-', color='#2563eb', linewidth=1.2)
+ax.set_xlabel('Income')
+ax.set_ylabel('Count')
+ax.set_title(f'Coverage Bias (coverage={in_frame.mean():.1%})', fontweight='bold')
+ax.xaxis.set_major_formatter(mticker.FuncFormatter(
+    lambda x, p: f'{x:,.0f}'))
+ax.legend()
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+## Debat Modern: Non-Probability + Model-Based Inference
+
+### Kapan Non-Probability Bisa "Diselamatkan"?
+
+Pendekatan modern [@wang2015; @elliott2017] menggunakan **model-based adjustment** untuk mengurangi bias dari non-probability samples:
+
+1. **Propensity Score Adjustment:** Model probabilitas masuk ke sampel non-probability ($P(\text{in sample} | X)$) menggunakan auxiliary data. Inverse propensity score digunakan sebagai weight.
+
+2. **Calibration Weighting:** Sesuaikan distribusi sampel agar match dengan distribusi populasi yang diketahui (dari sensus atau administrative data) pada variabel-variabel kunci.
+
+3. **Doubly Robust Estimation:** Kombinasi propensity model dan outcome model — konsisten jika salah satu model benar.
+
+4. **Small Area Estimation:** Gunakan model multilevel untuk "meminjam kekuatan" dari auxiliary data dan link non-probability sample ke populasi.
+
+::: {.callout-tip}
+## Syarat Keberhasilan
+
+Model-based adjustment untuk non-probability sample **berhasil** jika:
+
+- Auxiliary variables ($X$) yang tersedia **menjelaskan** perbedaan antara sample dan populasi
+- Asumsi **ignorability** terpenuhi: setelah conditioning on $X$, selection independent of $Y$
+- Population benchmarks (distribusi $X$ di populasi) tersedia dan reliable
+- Variasi dalam propensity score cukup — tidak ada strata populasi yang sama sekali tidak ter-cover
+
+Jika asumsi dilanggar, adjustment justru bisa **memperburuk** bias.
+:::
+
+### Framework Keputusan
+
+```{mermaid}
+%%| fig-width: 8
+%%| label: fig-nonprob-decision
+flowchart TD
+    A["Sampel non-probability<br/>tersedia"] --> B{"Auxiliary data<br/>lengkap?"}
+    B -->|Ya| C{"Population<br/>benchmarks<br/>tersedia?"}
+    B -->|Tidak| D["⚠️ Inference<br/>sangat terbatas"]
+    C -->|Ya| E["Calibration /<br/>Propensity<br/>adjustment"]
+    C -->|Tidak| F["Model-based<br/>estimation<br/>(dengan caveats)"]
+    E --> G["Sensitivity<br/>analysis wajib"]
+    F --> G
+
+    style D fill:#fef2f2,stroke:#dc2626,stroke-width:2px
+    style E fill:#d1fae5,stroke:#059669,stroke-width:2px
+    style G fill:#fef3c7,stroke:#d97706,stroke-width:2px
+```
+
+## Ringkasan Metode Non-Probability
+
+| Metode | Mekanisme | Bias Utama | Justified Ketika | Potensi Adjustment |
+|--------|-----------|-----------|------------------|-------------------|
+| **Convenience** | Unit termudah diakses | Selection, coverage | Pilot, exploratory | Calibration jika auxiliary data ada |
+| **Purposive** | Peneliti memilih | Expert judgment bias | Qualitative, rare populations | Terbatas |
+| **Quota** | Kuota per kategori, non-random fill | Selection within quotas | Market research, quick estimates | Post-stratification |
+| **Snowball** | Referral chains | Seed bias, homophily | Hidden populations | RDS adjustment |
+| **RDS** | Structured snowball + incentive | Assumptions often violated | Hidden populations (improved) | Network-size weighting |
+
+::: {.takeaways}
+### Key Takeaways
+
+1. **Non-probability ≠ invalid.** Konteks menentukan. Untuk hidden populations atau exploratory research, non-probability sering justified.
+2. **Bias ≠ hanya masalah ukuran.** Memperbesar $n$ pada convenience sampling **tidak** mengurangi bias — hanya mengurangi variance.
+3. **Model-based adjustment** memungkinkan inferensi dari non-probability samples, **dengan syarat** auxiliary data kuat dan asumsi terpenuhi.
+4. **RDS bukan silver bullet.** Asumsinya sering dilanggar; hasil RDS harus diinterpretasi dengan hati-hati dan sensitivity analysis.
+5. **Transparansi adalah kunci.** Jika menggunakan non-probability, dokumentasikan mekanisme seleksi, potensi bias, dan batasan inferensi.
+:::
+
+::: {.exercises}
+### Exercises
+
+1. **Bias quantification.** Sebuah survei online tentang kepuasan pelanggan bank mendapat 5.000 responden. Data populasi menunjukkan 60% nasabah berusia >40 tahun, tapi hanya 25% responden survei berusia >40. Hitung potensi bias menggunakan simulasi jika kepuasan berkorelasi positif dengan usia.
+
+2. **RDS design.** Anda diminta mendesain RDS untuk mengestimasi prevalensi penggunaan narkoba di kota besar. Jelaskan: (a) berapa seed yang diperlukan, (b) berapa coupon per responden, (c) bagaimana mengukur network size, (d) kapan chain dianggap converged.
+
+3. **Adjustment exercise.** Gunakan dataset simulasi: tarik convenience sample yang over-represents urban + high education. Lakukan post-stratification menggunakan distribusi `urban_rural` × `education` dari populasi. Bandingkan estimasi sebelum dan sesudah adjustment.
+:::
+
+### Further Reading
+
+- @elliott2017: Framework komprehensif untuk inferensi dari non-probability samples.
+- @wang2015: Studi kasus forecasting election dengan non-representative polls.
+- @heckathorn2002: Teori formal RDS dengan derivasi estimator.

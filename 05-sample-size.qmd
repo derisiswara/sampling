@@ -1,0 +1,913 @@
+---
+title: "Penentuan Ukuran Sampel"
+subtitle: "Dari formula dasar hingga power analysis, Bayesian, dan pendekatan ML"
+---
+
+```{r}
+#| label: setup
+#| include: false
+source("_common.R")
+pop <- load_population()
+N <- nrow(pop)
+```
+
+Penentuan ukuran sampel (*sample size determination*) adalah keputusan desain paling kritis — terlalu kecil menghasilkan presisi rendah, terlalu besar membuang sumber daya. Bab ini menyajikan pendekatan dari yang paling sederhana hingga advanced [@cochran1977; @lohr2021; @cohen1988].
+
+## SRS untuk Estimasi Mean
+
+### Formula Dasar
+
+Untuk mengestimasi population mean $\bar{Y}$ dengan margin of error $e$ pada confidence level $(1-\alpha)$:
+
+$$
+n = \frac{z^2_{1-\alpha/2} \cdot \sigma^2}{e^2}
+$$ {#eq-n-mean}
+
+Dengan Finite Population Correction (FPC):
+
+$$
+n = \frac{n_0}{1 + n_0/N} \quad \text{di mana } n_0 = \frac{z^2 \sigma^2}{e^2}
+$$ {#eq-n-mean-fpc}
+
+::: {.column-margin}
+$\sigma^2$ biasanya tidak diketahui. Gunakan: (1) pilot study, (2) data sebelumnya, (3) range/4 rule: $\sigma \approx (\max - \min)/4$, atau (4) conservative estimate.
+:::
+
+### Contoh Numerik
+
+Ingin mengestimasi mean income dengan $e = $ Rp 500.000, $\sigma = $ Rp 3.000.000, 95% confidence:
+
+$$
+n_0 = \frac{1.96^2 \times 3{,}000{,}000^2}{500{,}000^2} = \frac{3.8416 \times 9 \times 10^{12}}{2.5 \times 10^{11}} = 138.3 \approx 139
+$$
+
+Dengan FPC ($N = 10{,}000$): $n = 139 / (1 + 139/10000) = 137.1 \approx 138$
+
+::: {.panel-tabset}
+
+#### R
+
+```{r}
+#| label: fig-n-mean
+#| fig-cap: "Ukuran sampel yang diperlukan sebagai fungsi margin of error dan estimasi σ."
+#| fig-width: 9
+#| fig-height: 5
+
+# Sample size function for mean
+n_for_mean <- function(sigma, e, alpha = 0.05, N_pop = Inf) {
+  z <- qnorm(1 - alpha / 2)
+  n0 <- (z^2 * sigma^2) / e^2
+  if (is.finite(N_pop)) n0 / (1 + n0 / N_pop) else n0
+}
+
+# Grid
+params <- expand_grid(
+  sigma = c(1e6, 2e6, 3e6, 4e6),
+  e = seq(1e5, 1e6, by = 5e4)
+) |>
+  mutate(
+    n_inf = map2_dbl(sigma, e, ~n_for_mean(.x, .y)),
+    n_fpc = map2_dbl(sigma, e, ~n_for_mean(.x, .y, N_pop = 10000)),
+    sigma_label = paste0("σ = ", format(sigma, big.mark = ","))
+  )
+
+ggplot(params, aes(x = e, y = n_fpc, color = sigma_label)) +
+  geom_line(linewidth = 1) +
+  scale_x_continuous(labels = label_comma()) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    title = "Sample Size vs Margin of Error (Estimasi Mean)",
+    subtitle = "N = 10,000 | 95% confidence | dengan FPC",
+    x = "Margin of Error (e)",
+    y = "Required Sample Size (n)",
+    color = NULL
+  )
+```
+
+#### Python
+
+```{python}
+#| label: fig-n-mean-py
+#| fig-cap: "Sample size vs margin of error (Python)."
+#| fig-width: 9
+#| fig-height: 5
+
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+from scipy.stats import norm
+
+def n_for_mean(sigma, e, alpha=0.05, N_pop=np.inf):
+    z = norm.ppf(1 - alpha / 2)
+    n0 = (z**2 * sigma**2) / e**2
+    if np.isfinite(N_pop):
+        return n0 / (1 + n0 / N_pop)
+    return n0
+
+sigmas = [1e6, 2e6, 3e6, 4e6]
+e_vals = np.arange(1e5, 1.05e6, 5e4)
+colors = ['#2563eb', '#059669', '#d97706', '#dc2626']
+
+fig, ax = plt.subplots(figsize=(9, 5))
+for sigma, color in zip(sigmas, colors):
+    n_vals = [n_for_mean(sigma, e, N_pop=10000) for e in e_vals]
+    ax.plot(e_vals, n_vals, linewidth=1.5, color=color,
+            label=f'σ = {sigma:,.0f}')
+
+ax.set_xlabel('Margin of Error (e)')
+ax.set_ylabel('Required Sample Size (n)')
+ax.set_title('Sample Size vs Margin of Error', fontweight='bold')
+ax.xaxis.set_major_formatter(mticker.FuncFormatter(
+    lambda x, p: f'{x:,.0f}'))
+ax.legend()
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+## SRS untuk Estimasi Proporsi
+
+### Formula
+
+$$
+n = \frac{z^2 \cdot p(1-p)}{e^2}
+$$ {#eq-n-prop}
+
+Dengan FPC: $n = n_0 / (1 + n_0/N)$.
+
+::: {.callout-tip}
+## Conservative vs Informed
+
+- **Conservative** ($p = 0.5$): menghasilkan $n$ terbesar → aman untuk semua proporsi.
+- **Informed prior** ($p$ dari studi sebelumnya): menghasilkan $n$ lebih kecil → lebih efisien jika prior akurat.
+
+Contoh: $e = 3\%$, 95% CI. Conservative: $n = 1.96^2 \times 0.25 / 0.03^2 = 1{,}068$. Jika $p = 0.10$: $n = 1.96^2 \times 0.09 / 0.03^2 = 384$.
+:::
+
+::: {.panel-tabset}
+
+### R
+
+```{r}
+#| label: fig-n-prop
+#| fig-cap: "Ukuran sampel untuk estimasi proporsi: efek dari expected proportion p dan margin of error."
+#| fig-width: 9
+#| fig-height: 5
+
+prop_grid <- expand_grid(
+  p = seq(0.05, 0.50, by = 0.05),
+  e = c(0.01, 0.02, 0.03, 0.05, 0.10)
+) |>
+  mutate(
+    n = map2_dbl(p, e, ~{
+      z <- qnorm(0.975)
+      n0 <- z^2 * .x * (1 - .x) / .y^2
+      ceiling(n0 / (1 + n0 / 10000))
+    }),
+    e_label = paste0("MoE = ", scales::percent(e))
+  )
+
+ggplot(prop_grid, aes(x = p, y = n, color = e_label)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    title = "Sample Size untuk Estimasi Proporsi",
+    subtitle = "N = 10,000 | 95% confidence | dengan FPC",
+    x = "Expected Proportion (p)",
+    y = "Required n",
+    color = NULL
+  )
+```
+
+### Python
+
+```{python}
+#| label: fig-n-prop-py
+#| fig-cap: "Sample size for proportion estimation (Python)."
+#| fig-width: 9
+#| fig-height: 5
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.stats import norm
+
+z = norm.ppf(0.975)
+p_vals = np.arange(0.05, 0.55, 0.05)
+e_vals = [0.01, 0.02, 0.03, 0.05, 0.10]
+colors = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed']
+
+fig, ax = plt.subplots(figsize=(9, 5))
+for e, color in zip(e_vals, colors):
+    n_vals = []
+    for p in p_vals:
+        n0 = z**2 * p * (1 - p) / e**2
+        n = np.ceil(n0 / (1 + n0 / 10000))
+        n_vals.append(n)
+    ax.plot(p_vals, n_vals, '-o', linewidth=1.5, markersize=4,
+            color=color, label=f'MoE = {e:.0%}')
+
+ax.set_xlabel('Expected Proportion (p)')
+ax.set_ylabel('Required n')
+ax.set_title('Sample Size for Proportion Estimation', fontweight='bold')
+ax.legend()
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+## Perbandingan Dua Mean / Dua Proporsi
+
+### Dua Independent Means
+
+$$
+n_{\text{per group}} = \frac{(z_{1-\alpha/2} + z_{1-\beta})^2 \cdot 2\sigma^2}{\delta^2}
+$$ {#eq-n-two-means}
+
+di mana $\delta = \mu_1 - \mu_2$ adalah perbedaan yang ingin dideteksi.
+
+### Dua Independent Proportions
+
+$$
+n_{\text{per group}} = \frac{(z_{1-\alpha/2} + z_{1-\beta})^2 \cdot [p_1(1-p_1) + p_2(1-p_2)]}{(p_1 - p_2)^2}
+$$ {#eq-n-two-props}
+
+## Adjustment Factors
+
+### Non-Response Adjustment
+
+$$
+n_{adj} = \frac{n}{1 - r}
+$$ {#eq-n-nonresponse}
+
+di mana $r$ = expected non-response rate. Jika $n = 400$ dan $r = 0.20$: $n_{adj} = 400 / 0.80 = 500$.
+
+### Design Effect Adjustment
+
+$$
+n_{eff} = n_{\text{SRS}} \times \text{DEFF}
+$$ {#eq-n-deff}
+
+### Combined Adjustment
+
+$$
+n_{final} = \frac{n_{\text{SRS}} \times \text{DEFF}}{1 - r}
+$$ {#eq-n-combined}
+
+::: {.callout-warning}
+## Jangan Lupa Adjustment!
+Rumus dasar mengasumsikan SRS dan 100% response rate. Dalam praktik, DEFF = 2–3 dan non-response = 20–40% sangat umum. Sampel 400 (rumus dasar) bisa menjadi $400 \times 2.5 / 0.70 = 1{,}429$ setelah adjustment.
+:::
+
+## Sample Size untuk Stratified Sampling
+
+Untuk alokasi proporsional:
+
+$$
+n = \frac{z^2 \sum W_h S_h^2}{e^2 + \frac{z^2}{N} \sum W_h S_h^2}
+$$
+
+Untuk alokasi Neyman, $n$ lebih kecil karena alokasi lebih efisien — tetapi butuh informasi $S_h$ yang akurat.
+
+## Sample Size untuk Cluster Sampling
+
+$$
+n = n_{\text{SRS}} \times [1 + (\bar{m} - 1)\rho]
+$$ {#eq-n-cluster}
+
+::: {.panel-tabset}
+
+### R
+
+```{r}
+#| label: fig-n-cluster
+#| fig-cap: "Efek ICC terhadap sample size requirement untuk cluster sampling."
+#| fig-width: 9
+#| fig-height: 5
+
+n_srs <- 400
+rho_vals <- seq(0, 0.3, by = 0.01)
+m_vals <- c(5, 10, 20, 30, 50)
+
+cluster_n <- expand_grid(rho = rho_vals, m = m_vals) |>
+  mutate(
+    deff = 1 + (m - 1) * rho,
+    n_required = ceiling(n_srs * deff),
+    m_label = paste0("m = ", m)
+  )
+
+ggplot(cluster_n, aes(x = rho, y = n_required, color = m_label)) +
+  geom_line(linewidth = 1) +
+  geom_hline(yintercept = n_srs, linetype = "dashed", color = "grey50") +
+  annotate("text", x = 0.25, y = n_srs + 100, label = "SRS baseline",
+           color = "grey50", size = 3.5) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    title = "Cluster Sampling: Required n vs ICC",
+    subtitle = sprintf("SRS baseline n = %d | n_cluster = n_SRS × DEFF", n_srs),
+    x = "ICC (ρ)", y = "Required Sample Size",
+    color = "Cluster Size"
+  )
+```
+
+### Python
+
+```{python}
+#| label: fig-n-cluster-py
+#| fig-cap: "Cluster sample size inflation (Python)."
+#| fig-width: 9
+#| fig-height: 5
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+n_srs = 400
+rho_vals = np.arange(0, 0.31, 0.01)
+m_vals = [5, 10, 20, 30, 50]
+colors = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed']
+
+fig, ax = plt.subplots(figsize=(9, 5))
+for m, color in zip(m_vals, colors):
+    deff = 1 + (m - 1) * rho_vals
+    n_req = np.ceil(n_srs * deff)
+    ax.plot(rho_vals, n_req, linewidth=1.5, color=color, label=f'm = {m}')
+
+ax.axhline(n_srs, linestyle='--', color='grey', linewidth=0.8)
+ax.set_xlabel('ICC (ρ)')
+ax.set_ylabel('Required Sample Size')
+ax.set_title('Cluster Sampling: Required n vs ICC', fontweight='bold')
+ax.legend()
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+## Power Analysis Framework
+
+### Konsep
+
+| Parameter | Simbol | Definisi |
+|-----------|--------|----------|
+| Significance level | $\alpha$ | P(reject H₀ \| H₀ true) — typically 0.05 |
+| Type II error rate | $\beta$ | P(fail to reject H₀ \| H₁ true) |
+| Power | $1 - \beta$ | P(reject H₀ \| H₁ true) — typically 0.80 or 0.90 |
+| Effect size | $d$, $h$, $f$ | Standardized magnitude of the effect |
+
+### Cohen's Conventions (dan Kritiknya)
+
+| Test | Small | Medium | Large |
+|------|-------|--------|-------|
+| Two means ($d$) | 0.2 | 0.5 | 0.8 |
+| Correlation ($r$) | 0.1 | 0.3 | 0.5 |
+| Proportions ($h$) | 0.2 | 0.5 | 0.8 |
+| ANOVA ($f$) | 0.1 | 0.25 | 0.4 |
+
+::: {.callout-warning}
+## Kritik Cohen's Conventions
+Cohen's conventions adalah **benchmarks generik** — bukan pengganti effect size yang context-specific. "Small" effect di clinical trial bisa sangat bermakna (obat menyelamatkan nyawa). "Large" effect di social science bisa trivial. **Selalu tentukan effect size berdasarkan:**
+
+1. Minimum Detectable Effect (MDE) yang bermakna secara praktis
+2. Literature review pada domain yang sama
+3. Pilot study data
+:::
+
+### Power Curves
+
+::: {.panel-tabset}
+
+#### R
+
+```{r}
+#| label: fig-power-curve
+#| fig-cap: "Power curves: hubungan antara sample size dan power untuk berbagai effect sizes (two-sample t-test)."
+#| fig-width: 9
+#| fig-height: 6
+
+library(pwr)
+
+n_range <- seq(10, 500, by = 5)
+effect_sizes <- c(0.2, 0.3, 0.5, 0.8)
+
+power_df <- expand_grid(n = n_range, d = effect_sizes) |>
+  mutate(
+    power = map2_dbl(n, d, ~pwr.t.test(n = .x, d = .y,
+                                         sig.level = 0.05,
+                                         type = "two.sample")$power),
+    d_label = paste0("d = ", d)
+  )
+
+ggplot(power_df, aes(x = n, y = power, color = d_label)) +
+  geom_line(linewidth = 1) +
+  geom_hline(yintercept = 0.80, linetype = "dashed", color = "grey50") +
+  annotate("text", x = 480, y = 0.82, label = "Power = 0.80",
+           color = "grey50", size = 3.5) +
+  scale_y_continuous(breaks = seq(0, 1, 0.1), limits = c(0, 1)) +
+  labs(
+    title = "Power Curves: Two-Sample t-Test",
+    subtitle = "α = 0.05 | n = per group",
+    x = "Sample Size per Group",
+    y = "Power (1 - β)",
+    color = "Effect Size"
+  )
+```
+
+```{r}
+#| label: tbl-required-n
+#| tbl-cap: "Sample size per group untuk mencapai power 80% dan 90% pada berbagai effect sizes."
+
+expand_grid(d = c(0.2, 0.3, 0.5, 0.8), power = c(0.80, 0.90)) |>
+  mutate(
+    n = map2_dbl(d, power, ~ceiling(
+      pwr.t.test(d = .x, power = .y, sig.level = 0.05,
+                 type = "two.sample")$n
+    )),
+    power_label = paste0(power * 100, "%")
+  ) |>
+  pivot_wider(names_from = power_label, values_from = n,
+              names_prefix = "n (power=") |>
+  gt() |>
+  tab_header(title = "Required n per Group (Two-Sample t-Test, α=0.05)") |>
+  cols_label(d = "Effect Size (d)")
+```
+
+#### Python
+
+```{python}
+#| label: fig-power-curve-py
+#| fig-cap: "Power curves (Python)."
+#| fig-width: 9
+#| fig-height: 6
+
+import numpy as np
+import matplotlib.pyplot as plt
+from statsmodels.stats.power import TTestIndPower
+
+power_analysis = TTestIndPower()
+n_range = np.arange(10, 501, 5)
+effect_sizes = [0.2, 0.3, 0.5, 0.8]
+colors = ['#2563eb', '#059669', '#d97706', '#dc2626']
+
+fig, ax = plt.subplots(figsize=(9, 6))
+for d, color in zip(effect_sizes, colors):
+    powers = [power_analysis.power(d, nobs1=n, ratio=1, alpha=0.05)
+              for n in n_range]
+    ax.plot(n_range, powers, linewidth=1.5, color=color, label=f'd = {d}')
+
+ax.axhline(0.80, linestyle='--', color='grey', linewidth=0.8)
+ax.set_xlabel('Sample Size per Group')
+ax.set_ylabel('Power (1 - β)')
+ax.set_title('Power Curves: Two-Sample t-Test', fontweight='bold')
+ax.set_ylim(0, 1)
+ax.legend()
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+## Sample Size Calculator
+
+Fungsi komprehensif untuk menghitung ukuran sampel dengan berbagai adjustment:
+
+::: {.panel-tabset}
+
+### R
+
+```{r}
+#| label: sample-size-calculator
+#| code-fold: false
+
+#' Comprehensive Sample Size Calculator
+#'
+#' @param type "mean" atau "proportion"
+#' @param sigma SD populasi (untuk type = "mean")
+#' @param p Expected proportion (untuk type = "proportion")
+#' @param e Margin of error
+#' @param alpha Significance level
+#' @param N_pop Population size (Inf untuk infinite)
+#' @param deff Design effect
+#' @param response_rate Expected response rate (0 to 1)
+#' @param n_subgroups Jumlah subgroup yang perlu dianalisis
+calc_sample_size <- function(type = c("mean", "proportion"),
+                              sigma = NULL, p = NULL,
+                              e, alpha = 0.05,
+                              N_pop = Inf, deff = 1,
+                              response_rate = 1,
+                              n_subgroups = 1) {
+  type <- match.arg(type)
+  z <- qnorm(1 - alpha / 2)
+
+  if (type == "mean") {
+    stopifnot(!is.null(sigma))
+    n0 <- (z^2 * sigma^2) / e^2
+  } else {
+    if (is.null(p)) p <- 0.5
+    n0 <- (z^2 * p * (1 - p)) / e^2
+  }
+
+  # FPC
+  if (is.finite(N_pop)) {
+    n0 <- n0 / (1 + n0 / N_pop)
+  }
+
+  # DEFF
+  n_adj <- n0 * deff
+
+  # Subgroups (ensure each subgroup has sufficient n)
+  n_adj <- n_adj * n_subgroups
+
+  # Non-response
+  n_final <- ceiling(n_adj / response_rate)
+
+  tibble(
+    `n (basic)` = ceiling(n0),
+    `n (with DEFF)` = ceiling(n0 * deff),
+    `n (with subgroups)` = ceiling(n0 * deff * n_subgroups),
+    `n (final, with NR adj)` = n_final,
+    DEFF = deff,
+    `Response Rate` = response_rate,
+    `Subgroups` = n_subgroups
+  )
+}
+
+# Example usage
+calc_sample_size(
+  type = "mean",
+  sigma = 3000000,
+  e = 500000,
+  N_pop = 10000,
+  deff = 2.0,
+  response_rate = 0.75,
+  n_subgroups = 1
+) |>
+  pivot_longer(everything(), names_to = "Parameter", values_to = "Value") |>
+  gt() |>
+  tab_header(
+    title = "Sample Size Calculation",
+    subtitle = "Mean income | e = 500K | σ = 3M | DEFF = 2.0 | RR = 75%"
+  )
+```
+
+### Python
+
+```{python}
+#| label: sample-size-calculator-py
+#| code-fold: false
+
+import numpy as np
+from scipy.stats import norm
+import pandas as pd
+
+def calc_sample_size(
+    type='mean', sigma=None, p=None, e=None,
+    alpha=0.05, N_pop=np.inf, deff=1,
+    response_rate=1, n_subgroups=1
+):
+    z = norm.ppf(1 - alpha / 2)
+
+    if type == 'mean':
+        n0 = (z**2 * sigma**2) / e**2
+    else:
+        if p is None: p = 0.5
+        n0 = (z**2 * p * (1 - p)) / e**2
+
+    if np.isfinite(N_pop):
+        n0 = n0 / (1 + n0 / N_pop)
+
+    n_adj = n0 * deff * n_subgroups
+    n_final = int(np.ceil(n_adj / response_rate))
+
+    return pd.DataFrame({
+        'Parameter': ['n (basic)', 'n (with DEFF)',
+                      'n (final, with NR adj)', 'DEFF', 'Response Rate'],
+        'Value': [int(np.ceil(n0)), int(np.ceil(n0 * deff)),
+                  n_final, deff, response_rate]
+    })
+
+calc_sample_size(
+    type='mean', sigma=3e6, e=5e5,
+    N_pop=10000, deff=2.0, response_rate=0.75
+)
+```
+
+:::
+
+## Multi-Objective Sample Size
+
+Ketika survei mengukur banyak variabel, hitung $n$ untuk **setiap variabel kunci**, lalu ambil **maksimum**:
+
+$$
+n^* = \max(n_1, n_2, \ldots, n_k)
+$$ {#eq-n-multi}
+
+::: {.panel-tabset}
+
+### R
+
+```{r}
+#| label: tbl-multi-obj
+#| tbl-cap: "Sample size untuk multiple objectives — ambil yang terbesar."
+
+pop_stats <- pop |>
+  summarise(
+    sd_income = sd(income),
+    sd_expenditure = sd(expenditure),
+    p_internet = mean(has_internet),
+    p_urban = mean(urban_rural == "Urban")
+  )
+
+multi_obj <- tibble(
+  Objective = c("Mean income (e=500K)", "Mean expenditure (e=300K)",
+                "Prop internet (e=3%)", "Prop urban (e=4%)"),
+  n = c(
+    ceiling(qnorm(0.975)^2 * pop_stats$sd_income^2 / 500000^2),
+    ceiling(qnorm(0.975)^2 * pop_stats$sd_expenditure^2 / 300000^2),
+    ceiling(qnorm(0.975)^2 * pop_stats$p_internet * (1 - pop_stats$p_internet) / 0.03^2),
+    ceiling(qnorm(0.975)^2 * pop_stats$p_urban * (1 - pop_stats$p_urban) / 0.04^2)
+  )
+) |>
+  mutate(Selected = ifelse(n == max(n), "✅ MAX", ""))
+
+multi_obj |>
+  gt() |>
+  tab_header(
+    title = "Multi-Objective Sample Size",
+    subtitle = "95% CI, tanpa DEFF/NR adjustment"
+  )
+```
+
+### Python
+
+```{python}
+#| label: tbl-multi-obj-py
+
+import numpy as np
+import pandas as pd
+from scipy.stats import norm
+
+z = norm.ppf(0.975)
+pop_py = r.pop.copy()
+
+objectives = {
+    'Mean income (e=500K)': z**2 * pop_py['income'].std()**2 / 500000**2,
+    'Mean expenditure (e=300K)': z**2 * pop_py['expenditure'].std()**2 / 300000**2,
+    'Prop internet (e=3%)': z**2 * pop_py['has_internet'].mean() * (1 - pop_py['has_internet'].mean()) / 0.03**2,
+    'Prop urban (e=4%)': z**2 * (pop_py['urban_rural'] == 'Urban').mean() * (1 - (pop_py['urban_rural'] == 'Urban').mean()) / 0.04**2,
+}
+
+df = pd.DataFrame({
+    'Objective': objectives.keys(),
+    'n': [int(np.ceil(v)) for v in objectives.values()]
+})
+df['Selected'] = df['n'].apply(lambda x: '✅ MAX' if x == df['n'].max() else '')
+df
+```
+
+:::
+
+## Bayesian Sample Size Determination
+
+### Average Posterior Variance Criterion (APVC)
+
+Pilih $n$ yang meminimalkan expected posterior variance:
+
+$$
+n^* = \arg\min_n \; E_y\left[\text{Var}(\theta \mid y)\right]
+$$
+
+Untuk normal model dengan prior $\theta \sim N(\mu_0, \tau^2)$ dan data $y \sim N(\theta, \sigma^2/n)$:
+
+$$
+\text{Var}(\theta \mid y) = \frac{1}{1/\tau^2 + n/\sigma^2}
+$$ {#eq-bayesian-posterior-var}
+
+### Average Coverage Criterion (ACC)
+
+Pilih $n$ sehingga posterior credible interval memiliki average coverage ≥ target:
+
+$$
+n^* = \min\{n : E_y[P(\theta \in \text{CI}_{1-\alpha} \mid y)] \geq 1 - \alpha\}
+$$
+
+### Perbandingan Frequentist vs Bayesian
+
+| Aspek | Frequentist | Bayesian |
+|-------|-------------|----------|
+| **Informasi prior** | Tidak digunakan | Diinkorporasi via prior |
+| **Kriteria** | MoE, power | Posterior variance, coverage |
+| **Interpretasi** | Long-run frequency | Direct probability |
+| **Sensitivity** | Terhadap σ, effect size | Terhadap prior + σ |
+| **Advantage** | Simpler, well-understood | Can incorporate prior knowledge |
+
+::: {.panel-tabset}
+
+### R
+
+```{r}
+#| label: fig-bayesian-n
+#| fig-cap: "Bayesian vs Frequentist sample size: posterior variance criterion."
+#| fig-width: 9
+#| fig-height: 5
+
+sigma <- 3e6
+tau <- 5e6  # prior SD (diffuse)
+n_range <- seq(10, 500, by = 5)
+
+# Bayesian: posterior variance
+post_var <- 1 / (1/tau^2 + n_range/sigma^2)
+
+# Frequentist: SE^2
+freq_var <- sigma^2 / n_range
+
+df_compare <- tibble(
+  n = rep(n_range, 2),
+  variance = c(post_var, freq_var),
+  approach = rep(c("Bayesian (τ=5M)", "Frequentist"), each = length(n_range))
+)
+
+ggplot(df_compare, aes(x = n, y = sqrt(variance), color = approach)) +
+  geom_line(linewidth = 1) +
+  scale_y_continuous(labels = label_comma()) +
+  labs(
+    title = "Bayesian vs Frequentist: Posterior SD / SE",
+    subtitle = "σ = 3M | Bayesian prior τ = 5M (diffuse)",
+    x = "Sample Size (n)",
+    y = "Posterior SD / Standard Error",
+    color = NULL
+  )
+```
+
+### Python
+
+```{python}
+#| label: fig-bayesian-n-py
+#| fig-cap: "Bayesian vs Frequentist comparison (Python)."
+#| fig-width: 9
+#| fig-height: 5
+
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+
+sigma = 3e6
+tau = 5e6
+n_range = np.arange(10, 501, 5)
+
+post_var = 1 / (1/tau**2 + n_range/sigma**2)
+freq_var = sigma**2 / n_range
+
+fig, ax = plt.subplots(figsize=(9, 5))
+ax.plot(n_range, np.sqrt(post_var), linewidth=1.5, color='#2563eb',
+        label='Bayesian (τ=5M)')
+ax.plot(n_range, np.sqrt(freq_var), linewidth=1.5, color='#dc2626',
+        label='Frequentist')
+ax.set_xlabel('Sample Size (n)')
+ax.set_ylabel('Posterior SD / Standard Error')
+ax.set_title('Bayesian vs Frequentist Sample Size', fontweight='bold')
+ax.yaxis.set_major_formatter(mticker.FuncFormatter(
+    lambda x, p: f'{x:,.0f}'))
+ax.legend()
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+## Sample Size untuk Machine Learning
+
+### Learning Curves Approach
+
+Alih-alih formula, gunakan **learning curves** — plot performance metric vs training set size:
+
+1. Train model pada subset data dengan ukuran berbeda: $n_1 < n_2 < \ldots < n_k$
+2. Evaluate pada hold-out test set
+3. Fit inverse power law: $\text{Error}(n) = an^{-b} + c$
+4. Extrapolate untuk menentukan $n$ yang mencapai target performance
+
+::: {.panel-tabset}
+
+### R
+
+```{r}
+#| label: fig-learning-curve
+#| fig-cap: "Learning curve: performance meningkat dengan n tapi dengan diminishing returns."
+#| fig-width: 9
+#| fig-height: 5
+
+set.seed(2024)
+
+# Simulate learning curve data
+n_train_sizes <- c(50, 100, 200, 500, 1000, 2000, 3000, 5000, 7000)
+
+# Simulate: error = a * n^(-b) + c + noise
+a <- 5; b <- 0.5; c <- 0.15
+lc_data <- tibble(
+  n_train = n_train_sizes,
+  error = a * n_train_sizes^(-b) + c + rnorm(length(n_train_sizes), 0, 0.01)
+)
+
+# Fit power law
+fit <- nls(error ~ a * n_train^(-b) + c, data = lc_data,
+           start = list(a = 5, b = 0.5, c = 0.15))
+
+# Predict
+n_pred <- seq(50, 10000, by = 50)
+pred_error <- predict(fit, newdata = tibble(n_train = n_pred))
+
+target_error <- 0.20
+n_for_target <- n_pred[which.min(abs(pred_error - target_error))]
+
+ggplot(lc_data, aes(x = n_train, y = error)) +
+  geom_point(size = 3, color = "#2563eb") +
+  geom_line(data = tibble(n_train = n_pred, error = pred_error),
+            color = "#dc2626", linewidth = 1) +
+  geom_hline(yintercept = target_error, linetype = "dashed",
+             color = "#059669") +
+  geom_vline(xintercept = n_for_target, linetype = "dotted",
+             color = "#059669") +
+  annotate("text", x = n_for_target + 500, y = target_error + 0.01,
+           label = sprintf("n ≈ %d for error = %.2f", n_for_target, target_error),
+           color = "#059669", size = 3.5) +
+  scale_x_continuous(labels = label_comma()) +
+  labs(
+    title = "Learning Curve: Sample Size for ML",
+    subtitle = "Fitted inverse power law: Error = a·n^(-b) + c",
+    x = "Training Set Size",
+    y = "Test Error (e.g., 1 - Accuracy)"
+  )
+```
+
+### Python
+
+```{python}
+#| label: fig-learning-curve-py
+#| fig-cap: "Learning curve approach for ML sample size (Python)."
+#| fig-width: 9
+#| fig-height: 5
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
+
+np.random.seed(2024)
+
+n_sizes = np.array([50, 100, 200, 500, 1000, 2000, 3000, 5000, 7000])
+errors = 5 * n_sizes**(-0.5) + 0.15 + np.random.normal(0, 0.01, len(n_sizes))
+
+def power_law(n, a, b, c):
+    return a * n**(-b) + c
+
+popt, _ = curve_fit(power_law, n_sizes, errors, p0=[5, 0.5, 0.15])
+
+n_pred = np.arange(50, 10001, 50)
+pred_errors = power_law(n_pred, *popt)
+
+target = 0.20
+n_target = n_pred[np.argmin(np.abs(pred_errors - target))]
+
+fig, ax = plt.subplots(figsize=(9, 5))
+ax.scatter(n_sizes, errors, s=60, color='#2563eb', zorder=5)
+ax.plot(n_pred, pred_errors, color='#dc2626', linewidth=1.5)
+ax.axhline(target, linestyle='--', color='#059669')
+ax.axvline(n_target, linestyle=':', color='#059669')
+ax.annotate(f'n ≈ {n_target} for error = {target}',
+            xy=(n_target, target), xytext=(n_target + 1000, target + 0.03),
+            arrowprops=dict(arrowstyle='->', color='#059669'),
+            color='#059669')
+ax.set_xlabel('Training Set Size')
+ax.set_ylabel('Test Error')
+ax.set_title('Learning Curve: ML Sample Size', fontweight='bold')
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+::: {.takeaways}
+### Key Takeaways
+
+1. **Formula dasar adalah starting point** — selalu adjust untuk DEFF, non-response, dan subgroup analysis.
+2. **Effect size harus context-driven**, bukan mengikuti Cohen's conventions secara membabi-buta.
+3. **Power analysis** membutuhkan empat parameter ($\alpha$, power, effect size, $n$) — fix tiga, solve satu.
+4. **Bayesian sample size** memanfaatkan prior information dan sering menghasilkan $n$ lebih kecil jika prior informatif.
+5. **Untuk ML**, gunakan learning curves daripada formula — lebih realistis dan data-driven.
+:::
+
+::: {.exercises}
+### Exercises
+
+1. **Multi-objective.** Survei ingin mengestimasi (a) mean income dengan MoE Rp 300K, (b) proporsi internet access dengan MoE 2%, (c) mean expenditure per region (5 region). Hitung $n$ final jika DEFF = 2.0 dan expected response rate = 70%.
+
+2. **Power analysis.** Program intervensi diharapkan meningkatkan skor kepuasan dari 3.2 ke 3.5 (SD = 1.0). Berapa ukuran sampel per group (treatment vs control) untuk mendeteksi perbedaan ini dengan power 80% dan 90%? Plot power curve.
+
+3. **Learning curve.** Gunakan dataset populasi untuk melatih model regresi (income ~ features). Buat learning curve dengan 10 titik training size. Estimasi berapa $n$ yang dibutuhkan untuk mencapai R² = 0.60.
+:::
+
+### Further Reading
+
+- @cohen1988: Referensi klasik power analysis.
+- @adcock1997: Review komprehensif metode sample size determination.
+- @figueroa2012: Sample size untuk classification problems.

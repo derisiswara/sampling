@@ -1,0 +1,681 @@
+---
+title: "Complex Sampling Designs"
+subtitle: "Multi-stage sampling, Design Effect, dan metode estimasi varians"
+---
+
+```{r}
+#| label: setup
+#| include: false
+source("_common.R")
+pop <- load_population()
+N <- nrow(pop)
+```
+
+Survei nasional jarang menggunakan SRS murni — mereka menerapkan **stratified multi-stage cluster sampling** yang mengkombinasikan beberapa teknik. Bab ini membahas bagaimana mendesain dan menganalisis survei kompleks tersebut [@lumley2010; @heeringa2017].
+
+## Multi-Stage Sampling
+
+### Two-Stage Sampling
+
+1. **Stage 1 (PSU — Primary Sampling Unit):** Pilih cluster dari populasi. Contoh: kecamatan.
+2. **Stage 2 (SSU — Secondary Sampling Unit):** Dari PSU terpilih, pilih subsample. Contoh: rumah tangga.
+
+### Contoh: Desain Mirip SUSENAS
+
+BPS SUSENAS menggunakan desain stratified two-stage:
+
+- **Stratum:** provinsi × urban/rural
+- **PSU:** blok sensus (dipilih PPS berdasarkan jumlah rumah tangga)
+- **SSU:** 10 rumah tangga per blok sensus (dipilih systematic)
+
+```{mermaid}
+%%| fig-width: 8
+%%| label: fig-multistage
+flowchart TD
+    A["<b>Populasi</b><br/>N = 10,000 RT<br/>10 Provinsi, 50 Kab"] --> B["<b>Stratifikasi</b><br/>Province × Urban/Rural"]
+    B --> C["<b>Stage 1: Pilih District (PSU)</b><br/>PPS berdasarkan jumlah RT"]
+    C --> D["<b>Stage 2: Pilih RT (SSU)</b><br/>SRS 20 RT per district"]
+    D --> E["<b>Final Sample</b><br/>n = selected PSU × 20"]
+
+    style A fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+    style B fill:#ede9fe,stroke:#7c3aed,stroke-width:2px
+    style C fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    style D fill:#d1fae5,stroke:#059669,stroke-width:2px
+    style E fill:#fce7f3,stroke:#db2777,stroke-width:2px
+```
+
+### Implementasi Two-Stage Design
+
+::: {.panel-tabset}
+
+#### R
+
+```{r}
+#| label: two-stage-design
+#| fig-cap: "Two-stage sampling: 15 district (PSU) dipilih PPS, 20 RT (SSU) per district."
+#| fig-width: 9
+#| fig-height: 5
+
+set.seed(2024)
+
+# Stage 1: Select PSUs (districts) with PPS
+district_info <- pop |>
+  summarise(
+    N_i = n(),
+    mean_income = mean(income),
+    .by = c(province, district, urban_rural)
+  ) |>
+  mutate(prob_pps = N_i / sum(N_i))
+
+n_psu <- 15
+m_ssu <- 20  # SSU per PSU
+
+# PPS systematic selection
+cum_prob <- cumsum(district_info$prob_pps)
+interval <- 1 / n_psu
+start <- runif(1, 0, interval)
+select_pts <- start + (0:(n_psu - 1)) * interval
+
+psu_selected <- sapply(select_pts, function(p) {
+  district_info$district[min(which(cum_prob >= p))]
+})
+
+# Stage 2: SRS within each PSU
+two_stage_sample <- pop |>
+  filter(district %in% psu_selected) |>
+  slice_sample(n = m_ssu, by = district)
+
+# Setup survey design object
+two_stage_sample <- two_stage_sample |>
+  left_join(
+    district_info |> select(district, N_i, prob_pps),
+    by = "district"
+  ) |>
+  mutate(
+    psu_prob = n_psu * prob_pps,
+    ssu_prob = m_ssu / N_i,
+    final_weight = 1 / (psu_prob * ssu_prob)
+  )
+
+# Survey design
+des <- svydesign(
+  id = ~district,
+  strata = NULL,
+  weights = ~final_weight,
+  data = two_stage_sample,
+  fpc = NULL
+)
+
+# Estimates
+est_mean <- svymean(~income, des)
+est_total <- svytotal(~income, des)
+
+tibble(
+  Parameter = c("Mean Income", "Total Income"),
+  Estimate = c(
+    format(round(coef(est_mean)), big.mark = ","),
+    format(round(coef(est_total)), big.mark = ",")
+  ),
+  SE = c(
+    format(round(SE(est_mean)), big.mark = ","),
+    format(round(SE(est_total)), big.mark = ",")
+  ),
+  `CI Lower` = c(
+    format(round(confint(est_mean)[1]), big.mark = ","),
+    format(round(confint(est_total)[1]), big.mark = ",")
+  ),
+  `CI Upper` = c(
+    format(round(confint(est_mean)[2]), big.mark = ","),
+    format(round(confint(est_total)[2]), big.mark = ",")
+  )
+) |>
+  gt() |>
+  tab_header(title = "Two-Stage Design Estimates (survey package)")
+```
+
+#### Python
+
+```{python}
+#| label: two-stage-design-py
+#| fig-cap: "Two-stage sampling estimates (Python)."
+
+import numpy as np
+import pandas as pd
+
+np.random.seed(2024)
+pop_py = r.pop.copy()
+
+# Stage 1: Select districts
+dist_info = pop_py.groupby('district').agg(
+    N_i=('income', 'size'),
+    mean_income=('income', 'mean')
+).reset_index()
+dist_info['prob'] = dist_info['N_i'] / dist_info['N_i'].sum()
+
+n_psu = 15
+m_ssu = 20
+
+cum_prob = dist_info['prob'].cumsum().values
+interval = 1 / n_psu
+start = np.random.uniform(0, interval)
+pts = start + np.arange(n_psu) * interval
+psu_sel = [dist_info.iloc[np.searchsorted(cum_prob, p)]['district']
+           for p in pts]
+
+# Stage 2: SRS within PSU
+samples = []
+for d in psu_sel:
+    d_data = pop_py[pop_py['district'] == d]
+    s = d_data.sample(n=min(m_ssu, len(d_data)), random_state=2024)
+    d_N = len(d_data)
+    d_prob = dist_info[dist_info['district'] == d]['prob'].values[0]
+    s = s.copy()
+    s['weight'] = 1 / (n_psu * d_prob * m_ssu / d_N)
+    samples.append(s)
+
+sample_2s = pd.concat(samples)
+
+# Weighted mean
+weighted_mean = np.average(sample_2s['income'], weights=sample_2s['weight'])
+true_mean = pop_py['income'].mean()
+
+results = pd.DataFrame({
+    'Metric': ['Weighted Mean', 'True Mean', 'Difference', 'Sample Size'],
+    'Value': [f'{weighted_mean:,.0f}', f'{true_mean:,.0f}',
+              f'{weighted_mean - true_mean:,.0f}', f'{len(sample_2s)}']
+})
+results
+```
+
+:::
+
+## Stratified Multi-Stage Cluster Sampling
+
+Desain survei nasional tipikal menggabungkan stratifikasi dengan multi-stage clustering:
+
+::: {.panel-tabset}
+
+### R
+
+```{r}
+#| label: complex-design
+#| fig-cap: "Stratified two-stage cluster design menggunakan region × urban_rural sebagai strata."
+
+set.seed(2024)
+
+# Create strata
+pop <- pop |>
+  mutate(stratum = paste(region, urban_rural, sep = "_"))
+
+strata_list <- unique(pop$stratum)
+n_psu_per_stratum <- 2
+m_per_psu <- 15
+
+# Stage 1: Select PSUs within each stratum
+complex_sample_list <- list()
+for (st in strata_list) {
+  st_pop <- pop |> filter(stratum == st)
+  st_districts <- unique(st_pop$district)
+
+  if (length(st_districts) >= n_psu_per_stratum) {
+    sel_psu <- sample(st_districts, n_psu_per_stratum)
+  } else {
+    sel_psu <- st_districts
+  }
+
+  # Stage 2: SRS within PSU
+  st_sample <- st_pop |>
+    filter(district %in% sel_psu) |>
+    group_by(district) |>
+    group_modify(~ slice_sample(.x, n = min(m_per_psu, nrow(.x)))) |>
+    ungroup() |>
+    mutate(
+      stratum_id = st,
+      psu_id = district,
+      n_psu_in_stratum = length(sel_psu)
+    )
+
+  complex_sample_list[[st]] <- st_sample
+}
+
+complex_sample <- bind_rows(complex_sample_list)
+
+# Compute weights (simplified)
+complex_sample <- complex_sample |>
+  left_join(
+    pop |> summarise(N_h = n(), .by = stratum),
+    by = c("stratum_id" = "stratum")
+  ) |>
+  mutate(
+    base_weight = N_h / n(),
+    .by = stratum_id
+  )
+
+# Survey design
+des_complex <- svydesign(
+  id = ~psu_id,
+  strata = ~stratum_id,
+  weights = ~base_weight,
+  data = complex_sample,
+  nest = TRUE
+)
+
+# Estimates
+est_complex <- svymean(~income, des_complex)
+est_by_region <- svyby(~income, ~region, des_complex, svymean)
+
+est_by_region |>
+  as_tibble() |>
+  mutate(
+    income = format(round(income), big.mark = ","),
+    se = format(round(se), big.mark = ",")
+  ) |>
+  gt() |>
+  tab_header(title = "Mean Income by Region (Complex Survey Design)")
+```
+
+### Python
+
+```{python}
+#| label: complex-design-py
+
+import numpy as np
+import pandas as pd
+
+pop_py = r.pop.copy()
+pop_py['stratum'] = pop_py['region'] + '_' + pop_py['urban_rural']
+
+# Simplified complex sample results
+true_by_region = pop_py.groupby('region')['income'].mean().reset_index()
+true_by_region.columns = ['Region', 'True Mean Income']
+true_by_region['True Mean Income'] = true_by_region['True Mean Income'].apply(
+    lambda x: f'{x:,.0f}')
+true_by_region
+```
+
+:::
+
+## Design Effect (DEFF) & Effective Sample Size
+
+### DEFF karena Clustering
+
+$$
+\text{DEFF}_{cl} = 1 + (\bar{m} - 1)\rho
+$$ {#eq-deff-cl}
+
+di mana $\bar{m}$ = rata-rata unit per cluster, $\rho$ = ICC.
+
+### DEFF karena Weighting
+
+$$
+\text{DEFF}_w = 1 + \text{CV}(w)^2
+$$ {#eq-deff-w}
+
+di mana $\text{CV}(w) = \text{SD}(w) / \text{mean}(w)$ adalah coefficient of variation dari weights.
+
+### Combined DEFF
+
+$$
+\text{DEFF} \approx \text{DEFF}_{cl} \times \text{DEFF}_w
+$$ {#eq-deff-combined}
+
+### Effective Sample Size
+
+$$
+n_{eff} = \frac{n}{\text{DEFF}}
+$$ {#eq-neff}
+
+::: {.callout-warning}
+## Interpretasi Praktis
+Jika $n = 1000$ dan $\text{DEFF} = 2.5$, maka $n_{eff} = 400$. Artinya, survei kompleks Anda memiliki presisi yang **setara dengan SRS berukuran 400** — bukan 1000. Ini memiliki implikasi besar terhadap sample size planning.
+:::
+
+### Menghitung DEFF
+
+::: {.panel-tabset}
+
+#### R
+
+```{r}
+#| label: fig-deff
+#| fig-cap: "Design Effect sebagai fungsi ICC dan cluster size: isolines menunjukkan DEFF = 1+(m-1)ρ."
+#| fig-width: 8
+#| fig-height: 6
+
+# DEFF contour plot
+rho_seq <- seq(0, 0.3, by = 0.005)
+m_seq <- seq(2, 50, by = 1)
+
+deff_grid <- expand_grid(rho = rho_seq, m = m_seq) |>
+  mutate(DEFF = 1 + (m - 1) * rho)
+
+ggplot(deff_grid, aes(x = rho, y = m, z = DEFF)) +
+  geom_contour_filled(breaks = c(1, 1.5, 2, 3, 4, 5, 7, 10, 15)) +
+  geom_contour(breaks = c(1.5, 2, 3, 5, 10), color = "white",
+               linewidth = 0.3) +
+  scale_fill_viridis_d(option = "plasma", name = "DEFF") +
+  labs(
+    title = "Design Effect: DEFF = 1 + (m-1)ρ",
+    subtitle = "Bahkan ICC kecil (ρ=0.05) menghasilkan DEFF besar ketika cluster size besar",
+    x = "ICC (ρ)",
+    y = "Cluster Size (m)"
+  )
+```
+
+```{r}
+#| label: tbl-deff-examples
+#| tbl-cap: "Contoh DEFF untuk kombinasi ICC dan cluster size yang umum."
+
+expand_grid(
+  `ICC (ρ)` = c(0.01, 0.02, 0.05, 0.10, 0.20),
+  `Cluster Size (m)` = c(5, 10, 20, 30, 50)
+) |>
+  mutate(DEFF = 1 + (`Cluster Size (m)` - 1) * `ICC (ρ)`) |>
+  pivot_wider(names_from = `Cluster Size (m)`, values_from = DEFF,
+              names_prefix = "m = ") |>
+  gt() |>
+  tab_header(title = "DEFF = 1 + (m-1)ρ") |>
+  tab_spanner(label = "Cluster Size (m)", columns = starts_with("m =")) |>
+  fmt_number(columns = starts_with("m ="), decimals = 2)
+```
+
+#### Python
+
+```{python}
+#| label: fig-deff-py
+#| fig-cap: "Design Effect contour plot (Python)."
+#| fig-width: 8
+#| fig-height: 6
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+rho = np.linspace(0, 0.3, 100)
+m = np.linspace(2, 50, 100)
+RHO, M = np.meshgrid(rho, m)
+DEFF = 1 + (M - 1) * RHO
+
+fig, ax = plt.subplots(figsize=(8, 6))
+cs = ax.contourf(RHO, M, DEFF, levels=[1, 1.5, 2, 3, 4, 5, 7, 10, 15],
+                 cmap='plasma')
+ax.contour(RHO, M, DEFF, levels=[1.5, 2, 3, 5, 10],
+           colors='white', linewidths=0.5)
+plt.colorbar(cs, label='DEFF')
+ax.set_xlabel('ICC (ρ)')
+ax.set_ylabel('Cluster Size (m)')
+ax.set_title('Design Effect: DEFF = 1 + (m−1)ρ', fontweight='bold')
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+## Variance Estimation untuk Complex Designs
+
+Untuk desain kompleks, variance **tidak** bisa dihitung dengan formula SRS sederhana. Empat metode utama:
+
+### Taylor Series Linearization (TSL)
+
+Metode default di `survey` package. Mengaproksimasi varians estimator non-linear menggunakan ekspansi Taylor orde pertama.
+
+$$
+\hat{V}_{TSL}(\hat{\theta}) \approx \sum_{h=1}^H \frac{n_h}{n_h - 1} \sum_{i=1}^{n_h} (e_{hi} - \bar{e}_h)^2
+$$ {#eq-tsl}
+
+di mana $e_{hi}$ = linearized residual dari PSU ke-$i$ di stratum $h$.
+
+### Replication Methods
+
+| Metode | Prinsip | Jumlah Replikasi | Cocok untuk |
+|--------|---------|-----------------|-------------|
+| **BRR** | Half-sample replicates | $n_h = 2$ per stratum required | Desain paired PSU |
+| **Jackknife (JRR)** | Drop-one PSU | $\sum n_h$ replikasi | General, robust |
+| **Bootstrap** | Resample PSUs with replacement | B (biasanya 200-500) | Paling fleksibel |
+
+### Implementasi Variance Estimation
+
+::: {.panel-tabset}
+
+#### R
+
+```{r}
+#| label: variance-estimation
+#| tbl-cap: "Perbandingan metode estimasi varians untuk desain survei kompleks."
+
+set.seed(2024)
+
+# Design with paired PSUs for BRR compatibility
+# Simplified: use 2 PSUs per stratum
+strata_v <- unique(pop$region)
+n_psu_v <- 2  # for BRR compatibility
+m_v <- 30
+
+var_sample_list <- list()
+for (st in strata_v) {
+  st_pop <- pop |> filter(region == st)
+  dists <- unique(st_pop$district)
+  sel <- sample(dists, min(n_psu_v, length(dists)))
+  ss <- st_pop |>
+    filter(district %in% sel) |>
+    group_by(district) |>
+    group_modify(~ slice_sample(.x, n = min(m_v, nrow(.x)))) |>
+    ungroup() |>
+    mutate(stratum_v = st, psu_v = district)
+  var_sample_list[[st]] <- ss
+}
+
+var_sample <- bind_rows(var_sample_list) |>
+  mutate(wt = N / n())
+
+# TSL design
+des_tsl <- svydesign(id = ~psu_v, strata = ~stratum_v,
+                     weights = ~wt, data = var_sample, nest = TRUE)
+
+# JRR design
+des_jrr <- as.svrepdesign(des_tsl, type = "JKn")
+
+# Bootstrap design
+des_boot <- as.svrepdesign(des_tsl, type = "bootstrap", replicates = 200)
+
+# Estimates comparison
+tsl_est <- svymean(~income, des_tsl)
+jrr_est <- svymean(~income, des_jrr)
+boot_est <- svymean(~income, des_boot)
+
+tibble(
+  Method = c("TSL (Taylor)", "Jackknife (JKn)", "Bootstrap (B=200)"),
+  Estimate = c(coef(tsl_est), coef(jrr_est), coef(boot_est)),
+  SE = c(SE(tsl_est), SE(jrr_est), SE(boot_est))
+) |>
+  mutate(
+    Estimate = format(round(Estimate), big.mark = ","),
+    SE = format(round(SE), big.mark = ",")
+  ) |>
+  gt() |>
+  tab_header(
+    title = "Variance Estimation Methods Comparison",
+    subtitle = "Estimasi mean income — semua metode menghasilkan SE yang serupa"
+  )
+```
+
+#### Python
+
+```{python}
+#| label: variance-estimation-py
+
+import numpy as np
+import pandas as pd
+
+# Simplified comparison using manual jackknife
+sample_py = r.var_sample.copy()
+clusters = sample_py['psu_v'].unique()
+income_vals = sample_py['income'].values
+weights = sample_py['wt'].values
+
+# Weighted mean
+theta_hat = np.average(income_vals, weights=weights)
+
+# Jackknife: drop one cluster at a time
+jack_estimates = []
+for c in clusters:
+    mask = sample_py['psu_v'] != c
+    jack_est = np.average(income_vals[mask], weights=weights[mask])
+    jack_estimates.append(jack_est)
+
+jack_estimates = np.array(jack_estimates)
+n_c = len(clusters)
+jack_var = ((n_c - 1) / n_c) * np.sum((jack_estimates - theta_hat)**2)
+jack_se = np.sqrt(jack_var)
+
+results = pd.DataFrame({
+    'Metric': ['Weighted Mean', 'Jackknife SE', 'n clusters', 'n total'],
+    'Value': [f'{theta_hat:,.0f}', f'{jack_se:,.0f}',
+              str(n_c), str(len(income_vals))]
+})
+results
+```
+
+:::
+
+## Praktis: svydesign() di R
+
+### Setup Lengkap
+
+```{r}
+#| label: svydesign-practical
+#| code-fold: false
+
+# --- Step 1: Define the survey design ---
+# id = PSU variable (cluster identifier)
+# strata = stratification variable
+# weights = sampling weight (inverse selection probability)
+# nest = TRUE jika PSU IDs tidak unik across strata
+
+des <- svydesign(
+  id = ~psu_v,
+  strata = ~stratum_v,
+  weights = ~wt,
+  data = var_sample,
+  nest = TRUE
+)
+```
+
+### Fungsi Analisis Utama
+
+```{r}
+#| label: survey-functions
+
+# --- Means ---
+svymean(~income, des)
+
+# --- Totals ---
+svytotal(~income, des)
+
+# --- Proportions ---
+svymean(~urban_rural, des)
+
+# --- Quantiles ---
+svyquantile(~income, des, quantiles = c(0.25, 0.5, 0.75))
+```
+
+### Analisis by Subgroup
+
+```{r}
+#| label: tbl-svyby
+#| tbl-cap: "Mean income by urban/rural menggunakan svyby()."
+
+# Correct approach: svyby (uses full design)
+svyby(~income, ~urban_rural, des, svymean) |>
+  as_tibble() |>
+  mutate(across(where(is.numeric), ~format(round(.), big.mark = ","))) |>
+  gt() |>
+  tab_header(title = "Mean Income by Urban/Rural (Complex Design)")
+```
+
+::: {.callout-warning}
+## Common Pitfall: Subpopulation Analysis
+
+**SALAH:** Subset data dulu, baru buat survey design.
+
+```r
+# ❌ SALAH — mengabaikan design structure
+urban_data <- var_sample |> filter(urban_rural == "Urban")
+des_wrong <- svydesign(id = ~psu_v, strata = ~stratum_v,
+                       weights = ~wt, data = urban_data)
+```
+
+**BENAR:** Gunakan `subset()` pada survey design object, atau `svyby()`.
+
+```r
+# ✅ BENAR — preserves design information
+des_urban <- subset(des, urban_rural == "Urban")
+svymean(~income, des_urban)
+```
+
+Memfilter sebelum `svydesign()` menghapus informasi tentang PSU dan strata yang tidak terpilih, menghasilkan standard error yang **underestimated**.
+:::
+
+### Survey Regression
+
+```{r}
+#| label: svyglm-demo
+#| tbl-cap: "Survey-weighted regression: income ~ urban_rural + education."
+
+model <- svyglm(income ~ urban_rural + education, design = des)
+
+broom::tidy(model, conf.int = TRUE) |>
+  mutate(across(where(is.numeric), ~round(., 2))) |>
+  gt() |>
+  tab_header(title = "Survey-Weighted OLS: Income ~ Urban/Rural + Education")
+```
+
+### srvyr Alternative (Tidyverse-friendly)
+
+```{r}
+#| label: srvyr-demo
+
+# srvyr: dplyr-like syntax for survey analysis
+des_srvyr <- var_sample |>
+  as_survey_design(
+    ids = psu_v,
+    strata = stratum_v,
+    weights = wt,
+    nest = TRUE
+  )
+
+des_srvyr |>
+  group_by(region) |>
+  summarise(
+    mean_income = survey_mean(income, vartype = c("se", "ci")),
+    prop_urban = survey_mean(urban_rural == "Urban", vartype = "ci")
+  ) |>
+  gt() |>
+  tab_header(title = "Region-level Estimates (srvyr)") |>
+  fmt_number(columns = where(is.numeric), decimals = 0)
+```
+
+::: {.takeaways}
+### Key Takeaways
+
+1. **Survei nasional menggunakan desain kompleks** (stratified multi-stage cluster) — BUKAN SRS. Analisis harus memperhitungkan design features.
+2. **DEFF menghubungkan presisi aktual dengan presisi SRS.** DEFF = 2 berarti Anda membutuhkan sampel 2× lebih besar dari perhitungan SRS.
+3. **Selalu gunakan `svydesign()`** (atau `as_survey_design()`) di R. Jangan pernah ignore weights, PSU, atau strata.
+4. **Variance estimation methods** (TSL, JRR, Bootstrap) memberikan hasil serupa untuk statistik sederhana, tapi berbeda untuk statistik kompleks (quantile, medians).
+5. **Subpopulation analysis:** gunakan `subset()` pada design object, bukan filter data sebelum design setup.
+:::
+
+::: {.exercises}
+### Exercises
+
+1. **Design setup.** Dengan dataset yang tersedia, buat survey design menggunakan `province` × `urban_rural` sebagai strata dan `district` sebagai PSU. Hitung mean income dan bandingkan SE dari `svymean()` vs. SE naif (tanpa design).
+
+2. **DEFF calculation.** Hitung DEFF empiris untuk estimasi mean income pada desain di atas. Berapa effective sample size? Diskusikan implikasinya.
+
+3. **Regression comparison.** Jalankan `glm(income ~ education + urban_rural)` tanpa survey design dan `svyglm()` dengan design. Bandingkan coefficients dan standard errors. Apa yang berubah dan mengapa?
+:::
+
+### Further Reading
+
+- @lumley2010: Panduan komprehensif analisis survei kompleks di R.
+- @heeringa2017: Pendekatan applied untuk analisis data survei.
+- @wolter2007: Teori mendalam tentang estimasi varians.

@@ -1,0 +1,26 @@
+{
+  "01-foundations.qmd": {
+    "01-foundations.html": "1cfdced5"
+  },
+  "02-probability.qmd": {
+    "02-probability.html": "79297228"
+  },
+  "03-nonprobability.qmd": {
+    "03-nonprobability.html": "94986c72"
+  },
+  "04-complex.qmd": {
+    "04-complex.html": "569275cb"
+  },
+  "05-sample-size.qmd": {
+    "05-sample-size.html": "30a3de25"
+  },
+  "06-weighting.qmd": {
+    "06-weighting.html": "9b722d5d"
+  },
+  "07-practical.qmd": {
+    "07-practical.html": "feefc183"
+  },
+  "index.qmd": {
+    "index.html": "1a9b4dba"
+  }
+}

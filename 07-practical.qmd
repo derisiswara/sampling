@@ -1,0 +1,740 @@
+---
+title: "Practical Guide & Decision Framework"
+subtitle: "Decision flowchart, checklist, common mistakes, dan case study end-to-end"
+---
+
+```{r}
+#| label: setup
+#| include: false
+source("_common.R")
+pop <- load_population()
+N <- nrow(pop)
+```
+
+Bab ini menyatukan seluruh materi menjadi panduan praktis yang dapat langsung diterapkan di lapangan.
+
+## Decision Flowchart
+
+Gunakan flowchart berikut untuk menentukan metode sampling yang tepat:
+
+```{mermaid}
+%%| fig-width: 10
+%%| label: fig-decision-flowchart
+flowchart TD
+    START["🎯 Tujuan: Estimasi parameter<br/>populasi?"] -->|Ya| FRAME{"Sampling frame<br/>tersedia?"}
+    START -->|Tidak, hanya eksplorasi| NP["Non-probability<br/>sampling OK"]
+
+    FRAME -->|Ya, lengkap| BUDGET{"Budget &<br/>logistik OK<br/>untuk SRS?"}
+    FRAME -->|Tidak lengkap| HIDDEN{"Hidden /<br/>hard-to-reach<br/>population?"}
+    FRAME -->|Parsial| ADJUST["Perbaiki frame +<br/>model-based<br/>adjustment"]
+
+    HIDDEN -->|Ya| SNOW["Snowball / RDS<br/>+ network-size<br/>weighting"]
+    HIDDEN -->|Tidak| QUOTA["Quota sampling +<br/>calibration<br/>weighting"]
+
+    BUDGET -->|Ya| HETERO{"Populasi<br/>heterogen<br/>antar group?"}
+    BUDGET -->|Tidak, terlalu mahal| GEO{"Constraint<br/>geografis?"}
+
+    HETERO -->|Ya, stratifying var ada| STRAT["✅ Stratified<br/>Random Sampling"]
+    HETERO -->|Tidak, cukup homogen| SRS["✅ Simple Random<br/>Sampling"]
+
+    GEO -->|Ya| CLUSTER{"Cluster size<br/>bervariasi?"}
+    GEO -->|Tidak| STRAT
+
+    CLUSTER -->|Ya, sangat bervariasi| PPS["✅ PPS Cluster<br/>Sampling"]
+    CLUSTER -->|Tidak, relatif sama| CLUST_SRS["✅ Cluster +<br/>SRS dalam cluster"]
+
+    STRAT --> SUBGROUP{"Perlu analisis<br/>subgroup?"}
+    SRS --> SUBGROUP
+    PPS --> SUBGROUP
+    CLUST_SRS --> SUBGROUP
+
+    SUBGROUP -->|Ya| INFLATE["Inflate n per<br/>subgroup +<br/>DEFF adjustment"]
+    SUBGROUP -->|Tidak| CALC["Hitung n<br/>(Chapter 5)"]
+    INFLATE --> CALC
+
+    style START fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+    style STRAT fill:#d1fae5,stroke:#059669,stroke-width:2px
+    style SRS fill:#d1fae5,stroke:#059669,stroke-width:2px
+    style PPS fill:#d1fae5,stroke:#059669,stroke-width:2px
+    style CLUST_SRS fill:#d1fae5,stroke:#059669,stroke-width:2px
+    style NP fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    style SNOW fill:#fef3c7,stroke:#d97706,stroke-width:2px
+    style QUOTA fill:#fef3c7,stroke:#d97706,stroke-width:2px
+```
+
+## Checklist Sebelum Sampling
+
+::: {.callout-tip}
+## Pre-Sampling Checklist
+
+### 1. Sampling Frame
+- [ ] Apakah frame tersedia dan up-to-date?
+- [ ] Berapa coverage rate terhadap target population?
+- [ ] Apakah ada duplikasi, undercoverage, atau overcoverage?
+- [ ] Kapan terakhir frame diupdate?
+
+### 2. Stratifikasi
+- [ ] Variabel stratifikasi apa yang tersedia di frame?
+- [ ] Apakah variabel tersebut berkorelasi dengan variabel survei utama?
+- [ ] Berapa strata optimal? (jangan terlalu banyak — minimum n per stratum ≥ 20)
+
+### 3. Budget & Logistik
+- [ ] Berapa total budget untuk fieldwork?
+- [ ] Berapa cost per interview (termasuk transportasi, honorarium, supervisi)?
+- [ ] Berapa banyak interviewer tersedia dan terlatih?
+- [ ] Berapa lama periode fieldwork?
+
+### 4. Subgroup Analysis
+- [ ] Subgroup mana yang harus dianalisis secara terpisah?
+- [ ] Apakah perlu estimasi per subgroup atau hanya overall?
+- [ ] Berapa presisi minimum per subgroup?
+
+### 5. Non-Response
+- [ ] Berapa expected response rate (dari survei sebelumnya)?
+- [ ] Apakah ada strategi follow-up untuk non-respondent?
+- [ ] Data apa yang tersedia untuk non-response adjustment?
+
+### 6. Quality Control
+- [ ] Bagaimana verifikasi data di lapangan?
+- [ ] Berapa persen back-checking yang dilakukan?
+- [ ] Apakah ada real-time monitoring dashboard?
+:::
+
+## 10 Kesalahan Paling Sering
+
+### 1. Mengabaikan Design Effect
+
+::: {.callout-important}
+**Masalah:** Menghitung sample size dengan formula SRS, lalu menggunakan cluster sampling di lapangan.
+
+**Dampak:** Presisi aktual jauh lebih rendah dari yang diharapkan. Jika DEFF = 3, presisi Anda setara dengan n/3.
+
+**Solusi:** Selalu kalikan n_SRS dengan DEFF. Jika ICC tidak diketahui, gunakan DEFF = 2.0 sebagai default konservatif.
+:::
+
+### 2. Mengabaikan Non-Response
+
+**Masalah:** Menargetkan n = 400 tapi response rate hanya 60% → effective n = 240.
+
+**Solusi:** $n_{final} = n_{target} / (1 - r)$. Budget untuk follow-up.
+
+### 3. Menganalisis Tanpa Weight
+
+**Masalah:** Menggunakan `mean(data$y)` alih-alih `svymean(~y, design)`.
+
+**Dampak:** Biased point estimates dan underestimated standard errors.
+
+### 4. Melaporkan Unweighted Counts
+
+**Masalah:** "Tabel menunjukkan 45% responden tinggal di urban." Ini unweighted proportion — bukan estimasi populasi.
+
+### 5. Subset Data Sebelum svydesign()
+
+**Masalah:** Memfilter data untuk subgroup analisis sebelum mendefinisikan survey design → SE underestimated.
+
+**Solusi:** Gunakan `subset()` pada design object.
+
+### 6. Memperlakukan Cluster Effect Sebagai Fixed
+
+**Masalah:** Menggunakan fixed effects untuk cluster ID alih-alih memperlakukannya sebagai random effect / PSU dalam survey design.
+
+### 7. Tidak Memeriksa Kualitas Frame
+
+**Masalah:** Langsung sampling dari frame tanpa assessment → coverage error tidak terdeteksi.
+
+### 8. Over-Stratification
+
+**Masalah:** Terlalu banyak strata → beberapa strata memiliki n < 10 → estimasi tidak stabil.
+
+**Rule of thumb:** Minimum 2 PSU per stratum untuk estimasi varians.
+
+### 9. Mengabaikan Multi-Objective
+
+**Masalah:** Menghitung n hanya untuk satu variabel, padahal survei mengukur 20 variabel → beberapa variabel underpowered.
+
+### 10. Tidak Melakukan Sensitivity Analysis
+
+**Masalah:** Mempercayai satu set asumsi (σ, DEFF, response rate) tanpa menguji bagaimana hasil berubah jika asumsi dilanggar.
+
+## Template R Script: Full Workflow
+
+::: {.panel-tabset}
+
+### R
+
+```{r}
+#| label: full-workflow
+#| code-fold: false
+
+# ============================================================
+# FULL SURVEY WORKFLOW TEMPLATE
+# ============================================================
+
+# --- 0. Setup ---
+library(dplyr)
+library(survey)
+library(srvyr)
+library(ggplot2)
+
+# --- 1. Load Population / Frame ---
+pop <- load_population()
+N <- nrow(pop)
+
+# --- 2. Design Parameters ---
+config <- list(
+  n_target      = 300,           # target sample size
+  n_psu         = 15,            # number of PSUs (districts)
+  m_per_psu     = 20,            # SSU per PSU
+  strat_var     = "region",      # stratification variable
+  psu_var       = "district",    # PSU identifier
+  target_vars   = c("income", "expenditure", "satisfaction"),
+  deff_assumed  = 2.0,
+  response_rate = 0.75
+)
+
+# Adjusted sample size
+n_adjusted <- ceiling(config$n_target * config$deff_assumed / config$response_rate)
+
+# --- 3. Sample Selection ---
+set.seed(2024)
+
+# Stage 1: Select PSUs (stratified PPS)
+district_info <- pop |>
+  summarise(N_d = n(), .by = district) |>
+  mutate(prob_d = N_d / sum(N_d))
+
+selected_psus <- pop |>
+  distinct(district, region) |>
+  left_join(district_info, by = "district") |>
+  group_by(region) |>
+  group_modify(~ slice_sample(.x,
+                              n = min(config$n_psu, nrow(.x)),
+                              weight_by = N_d)) |>
+  ungroup() |>
+  pull(district)
+
+# Stage 2: SRS within PSUs
+survey_sample <- pop |>
+  filter(district %in% selected_psus) |>
+  group_by(district) |>
+  group_modify(~ slice_sample(.x, n = min(config$m_per_psu, nrow(.x)))) |>
+  ungroup()
+
+# --- 4. Compute Weights ---
+survey_sample <- survey_sample |>
+  left_join(district_info, by = "district") |>
+  mutate(
+    pi_1 = length(selected_psus) * prob_d,  # PSU selection prob
+    pi_2 = config$m_per_psu / N_d,          # SSU selection prob
+    base_weight = 1 / (pi_1 * pi_2)
+  )
+
+# --- 5. Setup Survey Design ---
+des <- svydesign(
+  id = ~district,
+  strata = ~region,
+  weights = ~base_weight,
+  data = survey_sample,
+  nest = TRUE
+)
+
+# --- 6. Calibration (Raking) ---
+pop_urban <- xtabs(~urban_rural, data = pop)
+pop_region <- xtabs(~region, data = pop)
+
+des_cal <- rake(
+  des,
+  sample.margins = list(~urban_rural, ~region),
+  population.margins = list(pop_urban, pop_region)
+)
+
+# --- 7. Analysis ---
+# Overall means
+overall <- svymean(~income + expenditure, des_cal)
+
+# By subgroup
+by_region <- svyby(~income, ~region, des_cal, svymean)
+by_urban <- svyby(~income, ~urban_rural, des_cal, svymean)
+
+# Regression
+model <- svyglm(income ~ urban_rural + education + household_size,
+                 design = des_cal)
+
+# --- 8. Diagnostics ---
+final_wts <- weights(des_cal)
+wt_diagnostics <- tibble(
+  n_actual = nrow(survey_sample),
+  n_eff = sum(final_wts)^2 / sum(final_wts^2),
+  cv_weights = sd(final_wts) / mean(final_wts),
+  deff_w = 1 + (sd(final_wts) / mean(final_wts))^2,
+  sum_weights = sum(final_wts),
+  ratio_max_min = max(final_wts) / min(final_wts)
+)
+
+# --- 9. Results Summary ---
+results_summary <- tibble(
+  Variable = c("Income", "Expenditure"),
+  Estimate = format(round(coef(overall)), big.mark = ","),
+  SE = format(round(SE(overall)), big.mark = ","),
+  CI_Lower = format(round(confint(overall)[, 1]), big.mark = ","),
+  CI_Upper = format(round(confint(overall)[, 2]), big.mark = ",")
+)
+
+results_summary |>
+  gt() |>
+  tab_header(
+    title = "Survey Results Summary",
+    subtitle = sprintf("n = %d | n_eff = %.0f | CV(w) = %.3f",
+                       nrow(survey_sample), wt_diagnostics$n_eff,
+                       wt_diagnostics$cv_weights)
+  )
+```
+
+### Python
+
+```{python}
+#| label: full-workflow-py
+#| code-fold: false
+
+# ============================================================
+# FULL SURVEY WORKFLOW TEMPLATE (Python)
+# ============================================================
+
+import numpy as np
+import pandas as pd
+from scipy.stats import norm
+
+np.random.seed(2024)
+
+# --- 1. Load Data ---
+pop_py = r.pop.copy()
+N = len(pop_py)
+
+# --- 2. Two-stage Sampling ---
+n_psu = 15
+m_per_psu = 20
+
+district_info = pop_py.groupby('district').size().reset_index(name='N_d')
+district_info['prob'] = district_info['N_d'] / district_info['N_d'].sum()
+
+# PPS selection
+selected = district_info.sample(n=n_psu, weights='prob',
+                                 random_state=2024)['district'].values
+
+# SRS within PSU
+samples = []
+for d in selected:
+    d_data = pop_py[pop_py['district'] == d]
+    s = d_data.sample(n=min(m_per_psu, len(d_data)), random_state=2024)
+    d_info = district_info[district_info['district'] == d].iloc[0]
+    s = s.copy()
+    s['pi_1'] = n_psu * d_info['prob']
+    s['pi_2'] = m_per_psu / d_info['N_d']
+    s['weight'] = 1 / (s['pi_1'] * s['pi_2'])
+    samples.append(s)
+
+survey_sample = pd.concat(samples)
+
+# --- 3. Weighted Analysis ---
+weighted_mean = np.average(survey_sample['income'],
+                           weights=survey_sample['weight'])
+true_mean = pop_py['income'].mean()
+
+# n_eff
+w = survey_sample['weight'].values
+n_eff = w.sum()**2 / (w**2).sum()
+cv_w = w.std() / w.mean()
+
+# By region
+by_region = survey_sample.groupby('region').apply(
+    lambda g: pd.Series({
+        'weighted_mean': np.average(g['income'], weights=g['weight']),
+        'n': len(g)
+    })
+).reset_index()
+
+results = pd.DataFrame({
+    'Metric': ['Weighted Mean Income', 'True Mean', 'Bias',
+               'n', 'n_eff', 'CV(weights)'],
+    'Value': [f'{weighted_mean:,.0f}', f'{true_mean:,.0f}',
+              f'{weighted_mean - true_mean:,.0f}',
+              str(len(survey_sample)), f'{n_eff:.1f}', f'{cv_w:.4f}']
+})
+results
+```
+
+:::
+
+## Case Study: Survei Kepuasan Pelanggan Bank
+
+### Konteks
+
+Sebuah bank dengan **50.000 nasabah aktif** di **10 kota** ingin mengukur kepuasan pelanggan (skor 1–5). Tujuan:
+
+1. Estimasi overall mean kepuasan dengan MoE ≤ 0.15 (95% CI)
+2. Estimasi per kota (10 kota) dengan MoE ≤ 0.30
+3. Perbandingan kepuasan nasabah digital vs conventional
+4. Identifikasi faktor-faktor yang mempengaruhi kepuasan
+
+### Step 1: Penentuan Desain
+
+```{mermaid}
+%%| fig-width: 8
+%%| label: fig-case-design
+flowchart LR
+    A["Frame: Database<br/>50K nasabah"] --> B["Strata: 10 kota ×<br/>2 tipe (digital/conv)"]
+    B --> C["Alokasi: Proportional<br/>dengan minimum per cell"]
+    C --> D["Selection: SRS<br/>within strata"]
+    D --> E["Adjustment:<br/>NR + calibration"]
+```
+
+### Step 2: Perhitungan Sample Size
+
+::: {.panel-tabset}
+
+#### R
+
+```{r}
+#| label: case-sample-size
+
+# Parameters
+N_bank <- 50000
+moe_overall <- 0.15
+moe_city <- 0.30
+alpha <- 0.05
+z <- qnorm(1 - alpha/2)
+sigma_est <- 1.0      # estimated SD of satisfaction (1-5 scale)
+deff <- 1.5            # within-city clustering mild
+response_rate <- 0.65  # expected
+
+# Overall sample size
+n_overall <- ceiling(z^2 * sigma_est^2 / moe_overall^2)
+n_overall_fpc <- ceiling(n_overall / (1 + n_overall / N_bank))
+
+# Per city (10 cities, each needs n_city)
+n_per_city <- ceiling(z^2 * sigma_est^2 / moe_city^2)
+n_cities_total <- n_per_city * 10
+
+# Take maximum
+n_srs <- max(n_overall_fpc, n_cities_total)
+
+# Adjust
+n_adjusted <- ceiling(n_srs * deff / response_rate)
+
+tibble(
+  Parameter = c("n (overall MoE)", "n (per-city MoE × 10)",
+                "n (SRS, take max)", "DEFF", "Response rate",
+                "n (final adjusted)"),
+  Value = c(n_overall_fpc, n_cities_total, n_srs, deff,
+            response_rate, n_adjusted)
+) |>
+  mutate(Value = format(round(Value), big.mark = ",")) |>
+  gt() |>
+  tab_header(
+    title = "Case Study: Sample Size Calculation",
+    subtitle = "Bank Customer Satisfaction Survey"
+  )
+```
+
+#### Python
+
+```{python}
+#| label: case-sample-size-py
+
+import numpy as np
+from scipy.stats import norm
+import pandas as pd
+
+N_bank = 50000
+z = norm.ppf(0.975)
+sigma = 1.0
+deff = 1.5
+rr = 0.65
+
+n_overall = np.ceil(z**2 * sigma**2 / 0.15**2)
+n_overall_fpc = np.ceil(n_overall / (1 + n_overall / N_bank))
+n_per_city = np.ceil(z**2 * sigma**2 / 0.30**2)
+n_cities = n_per_city * 10
+n_srs = max(n_overall_fpc, n_cities)
+n_final = int(np.ceil(n_srs * deff / rr))
+
+pd.DataFrame({
+    'Parameter': ['n (overall)', 'n (10 cities)', 'n (SRS max)',
+                  'n (final adjusted)'],
+    'Value': [int(n_overall_fpc), int(n_cities), int(n_srs), n_final]
+})
+```
+
+:::
+
+### Step 3: Sampling, Weighting, dan Estimasi
+
+::: {.panel-tabset}
+
+#### R
+
+```{r}
+#| label: case-full-analysis
+#| fig-cap: "Case study: estimasi kepuasan per kota dengan 95% CI."
+#| fig-width: 10
+#| fig-height: 6
+
+set.seed(2024)
+
+# Simulate bank customer population
+bank_pop <- tibble(
+  customer_id = 1:N_bank,
+  city = sample(paste0("Kota_", sprintf("%02d", 1:10)), N_bank, replace = TRUE,
+                prob = c(0.20, 0.15, 0.12, 0.10, 0.10, 0.08, 0.08, 0.07, 0.05, 0.05)),
+  type = sample(c("Digital", "Conventional"), N_bank, replace = TRUE,
+                prob = c(0.45, 0.55)),
+  tenure_years = round(runif(N_bank, 0.5, 15), 1),
+  transaction_freq = rpois(N_bank, lambda = ifelse(
+    sample(c("Digital", "Conventional"), N_bank, replace = TRUE, prob = c(0.45, 0.55)) == "Digital", 12, 5
+  ))
+)
+
+# Satisfaction correlated with type, city, tenure
+city_effect <- setNames(rnorm(10, 0, 0.3), paste0("Kota_", sprintf("%02d", 1:10)))
+bank_pop <- bank_pop |>
+  mutate(
+    satisfaction = pmin(pmax(round(
+      3.2 +
+      0.3 * (type == "Digital") +
+      city_effect[city] +
+      0.02 * tenure_years +
+      rnorm(N_bank, 0, 0.8)
+    ), 1), 5)
+  )
+
+# Stratified sampling
+n_final <- n_adjusted
+bank_pop <- bank_pop |>
+  mutate(stratum = paste(city, type, sep = "_"))
+
+strata_counts <- bank_pop |> count(stratum, name = "N_h")
+
+# Proportional allocation with minimum 15 per stratum
+allocation <- strata_counts |>
+  mutate(
+    W_h = N_h / N_bank,
+    n_h_prop = pmax(round(n_final * W_h), 15)
+  )
+
+# Draw sample
+bank_sample <- bank_pop |>
+  left_join(allocation |> select(stratum, n_h_prop), by = "stratum") |>
+  group_by(stratum, n_h_prop) |>
+  group_modify(~ slice_sample(.x, n = min(.y$n_h_prop[[1]], nrow(.x)))) |>
+  ungroup() |>
+  select(-n_h_prop)
+
+# Simulate non-response
+bank_sample <- bank_sample |>
+  mutate(
+    responded = rbinom(n(), 1, 0.65 + 0.05 * (type == "Digital"))
+  )
+
+bank_respondents <- bank_sample |> filter(responded == 1)
+
+# Compute weights
+bank_respondents <- bank_respondents |>
+  left_join(strata_counts, by = "stratum") |>
+  mutate(
+    n_h_resp = n(), .by = stratum
+  ) |>
+  mutate(
+    base_weight = N_h / n_h_resp
+  )
+
+# Survey design
+des_bank <- svydesign(
+  id = ~1,
+  strata = ~stratum,
+  weights = ~base_weight,
+  data = bank_respondents
+)
+
+# Calibrate to known city distribution
+pop_city_tbl <- xtabs(~city, data = bank_pop)
+des_bank_cal <- postStratify(des_bank, ~city, pop_city_tbl)
+
+# Estimates
+overall_sat <- svymean(~satisfaction, des_bank_cal)
+by_city <- svyby(~satisfaction, ~city, des_bank_cal, svymean)
+by_type <- svyby(~satisfaction, ~type, des_bank_cal, svymean)
+
+# Plot
+by_city_df <- as.data.frame(by_city) |>
+  as_tibble() |>
+  mutate(
+    lower = satisfaction - 1.96 * se,
+    upper = satisfaction + 1.96 * se
+  )
+
+ggplot(by_city_df, aes(x = reorder(city, satisfaction), y = satisfaction)) +
+  geom_point(size = 3, color = "#2563eb") +
+  geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.2, color = "#2563eb") +
+  geom_hline(yintercept = coef(overall_sat), linetype = "dashed",
+             color = "#dc2626") +
+  coord_flip() +
+  labs(
+    title = "Kepuasan Pelanggan per Kota (95% CI)",
+    subtitle = sprintf("Overall mean = %.2f (SE = %.3f) | n respondents = %d",
+                       coef(overall_sat), SE(overall_sat),
+                       nrow(bank_respondents)),
+    x = NULL, y = "Mean Satisfaction (1-5)"
+  ) +
+  scale_y_continuous(limits = c(2.5, 4.5))
+```
+
+```{r}
+#| label: tbl-case-results
+#| tbl-cap: "Hasil survei: estimasi kepuasan per tipe nasabah."
+
+by_type |>
+  as.data.frame() |>
+  as_tibble() |>
+  mutate(
+    CI = sprintf("[%.2f, %.2f]", satisfaction - 1.96 * se, satisfaction + 1.96 * se)
+  ) |>
+  select(type, satisfaction, se, CI) |>
+  gt() |>
+  tab_header(title = "Satisfaction by Customer Type") |>
+  cols_label(type = "Type", satisfaction = "Mean", se = "SE", CI = "95% CI") |>
+  fmt_number(columns = c(satisfaction, se), decimals = 3)
+```
+
+```{r}
+#| label: case-regression
+
+# Factors affecting satisfaction
+model_bank <- svyglm(satisfaction ~ type + tenure_years + transaction_freq,
+                      design = des_bank_cal)
+
+broom::tidy(model_bank, conf.int = TRUE) |>
+  mutate(across(where(is.numeric), ~round(., 3))) |>
+  gt() |>
+  tab_header(title = "Regression: Faktor yang Mempengaruhi Kepuasan")
+```
+
+#### Python
+
+```{python}
+#| label: case-analysis-py
+
+import numpy as np
+import pandas as pd
+
+bank_resp = r.bank_respondents.copy()
+weights = bank_resp['base_weight'].values
+satisfaction = bank_resp['satisfaction'].values
+
+# Overall weighted mean
+overall_mean = np.average(satisfaction, weights=weights)
+
+# By type
+by_type = bank_resp.groupby('type').apply(
+    lambda g: pd.Series({
+        'weighted_mean': np.average(g['satisfaction'], weights=g['base_weight']),
+        'n': len(g)
+    })
+).reset_index()
+
+# By city
+by_city = bank_resp.groupby('city').apply(
+    lambda g: pd.Series({
+        'weighted_mean': np.average(g['satisfaction'], weights=g['base_weight']),
+        'n': len(g)
+    })
+).reset_index().sort_values('weighted_mean', ascending=False)
+
+results = pd.concat([
+    pd.DataFrame({'Metric': ['Overall Mean', 'n respondents', 'n_eff'],
+                   'Value': [f'{overall_mean:.3f}', str(len(bank_resp)),
+                            f'{weights.sum()**2 / (weights**2).sum():.0f}']}),
+])
+results
+```
+
+:::
+
+### Step 4: Quality Check & Reporting
+
+```{r}
+#| label: case-diagnostics
+#| fig-cap: "Case study diagnostics: distribusi weight dan marginal check."
+#| fig-width: 10
+#| fig-height: 5
+
+library(patchwork)
+
+final_wts_bank <- weights(des_bank_cal)
+
+p1 <- ggplot(tibble(w = final_wts_bank), aes(x = w)) +
+  geom_histogram(bins = 30, fill = "#2563eb", alpha = 0.7) +
+  labs(title = "Weight Distribution", x = "Weight", y = "Count")
+
+# Marginal check: city
+pop_city_prop <- prop.table(table(bank_pop$city))
+samp_city_prop <- prop.table(svytable(~city, des_bank_cal))
+
+city_check <- tibble(
+  city = rep(names(pop_city_prop), 2),
+  proportion = c(pop_city_prop, samp_city_prop),
+  source = rep(c("Population", "Weighted Sample"), each = length(pop_city_prop))
+)
+
+p2 <- ggplot(city_check, aes(x = city, y = proportion, fill = source)) +
+  geom_col(position = "dodge", alpha = 0.8) +
+  scale_fill_manual(values = c("Population" = "#059669", "Weighted Sample" = "#2563eb")) +
+  labs(title = "Marginal Check: City Distribution",
+       x = NULL, y = "Proportion", fill = NULL) +
+  scale_y_continuous(labels = percent) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p1 | p2
+```
+
+### Summary: Langkah-langkah Utama Case Study
+
+| Step | Action | Output |
+|------|--------|--------|
+| 1 | Define objectives & precision requirements | MoE per tujuan |
+| 2 | Evaluate frame (database nasabah) | Coverage assessment |
+| 3 | Choose design (stratified by city × type) | Design specification |
+| 4 | Calculate sample size (multi-objective + DEFF + NR) | n = `r n_adjusted` |
+| 5 | Allocate to strata (proportional, min 15/stratum) | Allocation table |
+| 6 | Select sample & conduct survey | Raw data |
+| 7 | Compute base weights (1/π_i) | Weighted dataset |
+| 8 | Adjust for non-response (weighting class) | NR-adjusted weights |
+| 9 | Calibrate to known totals (city distribution) | Final weights |
+| 10 | Analyze with survey design (svydesign + svymean etc.) | Estimates + SE + CI |
+| 11 | Diagnostics (weight distribution, marginals) | QC report |
+| 12 | Report (estimates, methodology, limitations) | Final deliverable |
+
+::: {.takeaways}
+### Key Takeaways
+
+1. **Gunakan decision flowchart** untuk memilih metode — jangan default ke convenience sampling hanya karena mudah.
+2. **Checklist sebelum sampling** mencegah kesalahan yang mahal — terutama frame quality, DEFF, dan non-response rate.
+3. **10 kesalahan terbanyak** semuanya bisa dihindari dengan perencanaan yang matang dan pemahaman design-based inference.
+4. **Full workflow template** menyediakan kerangka kerja yang reproducible — dari sampling frame hingga estimasi akhir.
+5. **Case study menunjukkan** bahwa setiap langkah mempengaruhi kualitas hasil — short-cut di satu langkah memperbesar error di hilir.
+:::
+
+::: {.exercises}
+### Exercises
+
+1. **Decision framework.** Anda diminta mendesain survei pengeluaran rumah tangga di provinsi Jawa Tengah. Frame tersedia: daftar blok sensus SP2020 (3,5 juta RT, 8.500 desa/kelurahan). Budget: 200 juta. Estimasi level kabupaten (35 kab/kota). Gunakan flowchart untuk menentukan desain, lalu hitung sample size.
+
+2. **Error diagnosis.** Diberikan dataset hasil survei (tanpa weight, tanpa design specification). Atasan meminta Anda menganalisis data ini. Tulis memo singkat yang menjelaskan: (a) risiko menganalisis tanpa weight, (b) informasi apa yang perlu Anda minta ke tim lapangan, (c) minimum correction yang bisa dilakukan.
+
+3. **Case study extension.** Modifikasi case study bank di atas: tambahkan analisis per segmen usia (<30, 30-50, >50). Hitung apakah sampel cukup untuk estimasi per segmen. Jika tidak, berapa tambahan sampel yang diperlukan?
+:::
+
+### Further Reading
+
+- @lohr2021, Chapter 14: Practical guidelines for survey design.
+- @groves2009, Chapter 4: Coverage and sampling frame issues.
+- @lumley2010, Chapter 1-3: Complete workflow analysis di R.

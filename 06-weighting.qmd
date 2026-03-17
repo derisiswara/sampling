@@ -1,0 +1,694 @@
+---
+title: "Survey Weighting & Adjustment"
+subtitle: "Base weight, non-response adjustment, calibration, dan diagnostik"
+---
+
+```{r}
+#| label: setup
+#| include: false
+source("_common.R")
+pop <- load_population()
+N <- nrow(pop)
+```
+
+Survey weights menjembatani gap antara **sampel** dan **populasi**. Tanpa weighting yang benar, estimasi dari desain survei kompleks akan biased [@valliant2018; @kish1992].
+
+## Base Weight
+
+### Definisi
+
+Base weight = inverse of selection probability:
+
+$$
+w_i = \frac{1}{\pi_i}
+$$ {#eq-base-weight}
+
+di mana $\pi_i$ = probabilitas inklusi unit $i$.
+
+Untuk desain two-stage (PPS stage 1, SRS stage 2):
+
+$$
+w_i = \frac{1}{\pi_{i1} \times \pi_{i2|1}} = \frac{1}{n_1 \cdot p_i} \times \frac{N_{c(i)}}{n_{c(i)}}
+$$
+
+di mana $p_i$ = probability cluster terpilih, $N_{c(i)}$ = jumlah unit dalam cluster, $n_{c(i)}$ = unit yang disampling.
+
+::: {.callout-note}
+## Self-Weighting Design
+Jika semua unit memiliki base weight sama ($w_i = w$ untuk semua $i$), desain disebut **self-weighting**. Ini terjadi ketika PPS digunakan di stage 1 dan equal-size SRS di stage 2. Self-weighting designs menghasilkan $\text{DEFF}_w = 1$.
+:::
+
+### Implementasi
+
+::: {.panel-tabset}
+
+#### R
+
+```{r}
+#| label: base-weight-demo
+
+set.seed(2024)
+
+# Simulate two-stage design
+dist_info <- pop |>
+  summarise(N_d = n(), .by = district) |>
+  mutate(prob_d = N_d / sum(N_d))
+
+n_psu <- 15
+m_ssu <- 20
+
+# PPS selection of districts
+cum_p <- cumsum(dist_info$prob_d)
+int <- 1 / n_psu
+st <- runif(1, 0, int)
+pts <- st + (0:(n_psu - 1)) * int
+sel_districts <- sapply(pts, function(p) {
+  dist_info$district[min(which(cum_p >= p))]
+})
+
+# SRS within selected districts
+weighted_sample <- pop |>
+  filter(district %in% sel_districts) |>
+  slice_sample(n = m_ssu, by = district) |>
+  left_join(dist_info, by = "district") |>
+  mutate(
+    pi_1 = pmin(n_psu * prob_d, 0.999),
+    pi_2 = m_ssu / N_d,
+    pi_total = pi_1 * pi_2,
+    base_weight = 1 / pi_total
+  )
+
+# Weight summary
+weighted_sample |>
+  summarise(
+    min_wt = min(base_weight),
+    median_wt = median(base_weight),
+    mean_wt = mean(base_weight),
+    max_wt = max(base_weight),
+    cv_wt = sd(base_weight) / mean(base_weight),
+    sum_wt = sum(base_weight)
+  ) |>
+  pivot_longer(everything(), names_to = "Statistic", values_to = "Value") |>
+  mutate(Value = format(round(Value, 2), big.mark = ",")) |>
+  gt() |>
+  tab_header(title = "Base Weight Distribution Summary")
+```
+
+#### Python
+
+```{python}
+#| label: base-weight-demo-py
+
+import numpy as np
+import pandas as pd
+
+sample_py = r.weighted_sample.copy()
+weights = sample_py['base_weight'].values
+
+results = pd.DataFrame({
+    'Statistic': ['Min', 'Median', 'Mean', 'Max', 'CV', 'Sum'],
+    'Value': [
+        f'{weights.min():.2f}', f'{np.median(weights):.2f}',
+        f'{weights.mean():.2f}', f'{weights.max():.2f}',
+        f'{weights.std()/weights.mean():.4f}',
+        f'{weights.sum():,.0f}'
+    ]
+})
+results
+```
+
+:::
+
+## Non-Response Adjustment
+
+### Weighting Class Adjustment
+
+Bagi sampel menjadi **weighting classes** (kelompok homogen terhadap response propensity). Dalam setiap class, inflate weight respondent untuk "mewakili" non-respondent:
+
+$$
+w_i^{NR} = w_i \times \frac{n_c}{n_c^{resp}}
+$$ {#eq-nr-adj}
+
+di mana $n_c$ = total sampled in class $c$, $n_c^{resp}$ = respondents in class $c$.
+
+### Propensity Model Adjustment
+
+Model probabilitas response menggunakan logistic regression:
+
+$$
+\hat{p}_i = P(\text{respond} \mid X_i) = \text{logit}^{-1}(\beta_0 + \beta_1 X_{i1} + \ldots)
+$$ {#eq-propensity}
+
+Non-response adjusted weight: $w_i^{NR} = w_i / \hat{p}_i$
+
+::: {.panel-tabset}
+
+### R
+
+```{r}
+#| label: nr-adjustment
+
+set.seed(2024)
+
+# Simulate non-response: higher income & urban less likely to respond
+weighted_sample <- weighted_sample |>
+  mutate(
+    resp_prob = plogis(-0.5 + 0.3 * (urban_rural == "Rural") -
+                         0.00000005 * income + 0.05 * household_size),
+    responded = rbinom(n(), 1, resp_prob)
+  )
+
+response_rate <- mean(weighted_sample$responded)
+
+# Method 1: Weighting class adjustment (by urban/rural × region)
+nr_adj <- weighted_sample |>
+  mutate(wt_class = paste(urban_rural, region)) |>
+  mutate(
+    n_class = n(),
+    n_resp = sum(responded),
+    nr_factor = n_class / n_resp,
+    .by = wt_class
+  ) |>
+  mutate(
+    wt_nr = ifelse(responded == 1, base_weight * nr_factor, NA)
+  )
+
+respondents <- nr_adj |> filter(responded == 1)
+
+# Compare estimates
+est_base <- weighted.mean(respondents$income, respondents$base_weight)
+est_nr <- weighted.mean(respondents$income, respondents$wt_nr)
+true_mean <- mean(pop$income)
+
+tibble(
+  Estimate = c("True Population Mean", "Respondents (base weight only)",
+               "Respondents (NR adjusted)"),
+  Mean_Income = c(true_mean, est_base, est_nr),
+  Bias = c(0, est_base - true_mean, est_nr - true_mean)
+) |>
+  mutate(across(c(Mean_Income, Bias), ~format(round(.), big.mark = ","))) |>
+  gt() |>
+  tab_header(
+    title = "Non-Response Adjustment Effect",
+    subtitle = sprintf("Response rate = %.1f%%", response_rate * 100)
+  )
+```
+
+### Python
+
+```{python}
+#| label: nr-adjustment-py
+
+import numpy as np
+import pandas as pd
+
+sample_py = r.respondents.copy()
+pop_py = r.pop.copy()
+true_mean = pop_py['income'].mean()
+
+# Weighted means
+base_wt_mean = np.average(sample_py['income'], weights=sample_py['base_weight'])
+nr_wt_mean = np.average(sample_py['income'], weights=sample_py['wt_nr'])
+
+results = pd.DataFrame({
+    'Estimate': ['True Mean', 'Base Weight', 'NR Adjusted'],
+    'Mean Income': [f'{true_mean:,.0f}', f'{base_wt_mean:,.0f}',
+                    f'{nr_wt_mean:,.0f}'],
+    'Bias': [0, f'{base_wt_mean - true_mean:,.0f}',
+             f'{nr_wt_mean - true_mean:,.0f}']
+})
+results
+```
+
+:::
+
+## Calibration / Raking
+
+### Konsep
+
+Calibration menyesuaikan weights agar distribusi **marginal** sampel match dengan **known population totals** dari sensus atau administrative data [@deville1992].
+
+**Raking** (iterative proportional fitting) menyesuaikan weights secara bergantian pada setiap variabel sampai konvergensi.
+
+### Implementasi
+
+::: {.panel-tabset}
+
+#### R
+
+```{r}
+#| label: calibration-demo
+#| fig-cap: "Distribusi weight sebelum dan sesudah calibration."
+#| fig-width: 9
+#| fig-height: 5
+
+# Known population totals
+pop_totals_urban <- pop |>
+  count(urban_rural) |>
+  mutate(Freq = n) |>
+  select(urban_rural, Freq)
+
+pop_totals_region <- pop |>
+  count(region) |>
+  mutate(Freq = n) |>
+  select(region, Freq)
+
+# Design with NR-adjusted weights
+des_nr <- svydesign(
+  id = ~district,
+  weights = ~wt_nr,
+  data = respondents
+)
+
+# Post-stratification on urban/rural
+pop_table_urban <- xtabs(~urban_rural, data = pop)
+obs_urban <- sort(unique(respondents$urban_rural))
+pop_table_urban <- pop_table_urban[names(pop_table_urban) %in% obs_urban]
+des_ps <- postStratify(des_nr, ~urban_rural, pop_table_urban, partial = TRUE)
+
+# Raking on urban/rural AND region
+pop_table_region <- xtabs(~region, data = pop)
+obs_region <- sort(unique(respondents$region))
+pop_table_region <- pop_table_region[names(pop_table_region) %in% obs_region]
+des_rake <- rake(des_nr,
+                  sample.margins = list(~urban_rural, ~region),
+                  population.margins = list(pop_table_urban, pop_table_region))
+
+# Compare
+est_pre <- coef(svymean(~income, des_nr))
+est_ps <- coef(svymean(~income, des_ps))
+est_rake <- coef(svymean(~income, des_rake))
+
+tibble(
+  Method = c("True Mean", "Pre-calibration (NR adj only)",
+             "Post-stratified (urban/rural)", "Raked (urban/rural + region)"),
+  Estimate = c(true_mean, est_pre, est_ps, est_rake),
+  Bias = c(0, est_pre - true_mean, est_ps - true_mean, est_rake - true_mean)
+) |>
+  mutate(across(c(Estimate, Bias), ~format(round(.), big.mark = ","))) |>
+  gt() |>
+  tab_header(title = "Calibration Effect on Estimates")
+```
+
+```{r}
+#| label: fig-weight-dist
+#| fig-cap: "Distribusi weights sebelum dan sesudah raking."
+#| fig-width: 9
+#| fig-height: 5
+
+weight_compare <- tibble(
+  weight = c(weights(des_nr), weights(des_rake)),
+  stage = rep(c("Pre-calibration", "Post-raking"), each = nrow(respondents))
+)
+
+ggplot(weight_compare, aes(x = weight, fill = stage)) +
+  geom_histogram(bins = 40, alpha = 0.6, position = "identity") +
+  scale_x_continuous(labels = label_comma()) +
+  scale_fill_manual(values = c("Pre-calibration" = "#d97706",
+                                "Post-raking" = "#2563eb")) +
+  labs(
+    title = "Weight Distribution: Before vs After Raking",
+    x = "Weight", y = "Count", fill = NULL
+  )
+```
+
+#### Python
+
+```{python}
+#| label: calibration-demo-py
+
+import numpy as np
+import pandas as pd
+
+# Simplified raking demonstration in Python
+sample_py = r.respondents.copy()
+pop_py = r.pop.copy()
+
+# Known population proportions
+pop_urban_prop = (pop_py['urban_rural'] == 'Urban').mean()
+pop_region_prop = pop_py['region'].value_counts(normalize=True).to_dict()
+
+# Manual single-step calibration (urban/rural)
+weights = sample_py['wt_nr'].values.copy()
+urban_mask = (sample_py['urban_rural'] == 'Urban').values
+
+# Adjust urban weights
+current_urban_prop = weights[urban_mask].sum() / weights.sum()
+urban_factor = pop_urban_prop / current_urban_prop
+rural_factor = (1 - pop_urban_prop) / (1 - current_urban_prop)
+
+cal_weights = weights.copy()
+cal_weights[urban_mask] *= urban_factor
+cal_weights[~urban_mask] *= rural_factor
+
+# Compare
+pre_mean = np.average(sample_py['income'], weights=weights)
+post_mean = np.average(sample_py['income'], weights=cal_weights)
+true_mean = pop_py['income'].mean()
+
+results = pd.DataFrame({
+    'Method': ['True Mean', 'Pre-calibration', 'Post-calibration (urban/rural)'],
+    'Estimate': [f'{true_mean:,.0f}', f'{pre_mean:,.0f}', f'{post_mean:,.0f}'],
+    'Bias': [0, f'{pre_mean - true_mean:,.0f}', f'{post_mean - true_mean:,.0f}']
+})
+results
+```
+
+:::
+
+## Weight Trimming
+
+### Mengapa Trimming?
+
+Extreme weights meningkatkan varians estimasi. Trimming meng-cap weights pada percentile tertentu (misalnya P95 atau P99) atau pada kelipatan dari median.
+
+$$
+w_i^{trim} = \min(w_i, w_{max})
+$$
+
+::: {.callout-warning}
+## Trade-off
+Trimming **mengurangi varians** tapi **memperkenalkan bias**. Aturan praktis: trim jika $\text{CV}(w) > 1.0$ atau jika ada weights yang >10× median [@potter1990].
+:::
+
+### Implementasi
+
+::: {.panel-tabset}
+
+#### R
+
+```{r}
+#| label: fig-trimming
+#| fig-cap: "Efek weight trimming terhadap distribusi weight dan estimasi."
+#| fig-width: 9
+#| fig-height: 5
+
+wts <- weights(des_rake)
+
+# Trimming at various percentiles
+trim_levels <- c(0.95, 0.97, 0.99, 1.00)
+
+trim_results <- map_dfr(trim_levels, function(p) {
+  cap <- quantile(wts, p)
+  trimmed <- pmin(wts, cap)
+  est <- weighted.mean(respondents$income, trimmed)
+  tibble(
+    percentile = paste0("P", p * 100),
+    cap_value = round(cap),
+    mean_wt = mean(trimmed),
+    cv_wt = sd(trimmed) / mean(trimmed),
+    estimate = est,
+    bias = est - true_mean
+  )
+})
+
+trim_results |>
+  mutate(across(where(is.numeric), ~format(round(., 2), big.mark = ","))) |>
+  gt() |>
+  tab_header(title = "Weight Trimming: Effect on CV and Estimates")
+```
+
+```{r}
+#| label: fig-trim-visual
+#| fig-cap: "Distribusi weights sebelum dan sesudah trimming di P95."
+#| fig-width: 9
+#| fig-height: 4
+
+cap_95 <- quantile(wts, 0.95)
+trimmed_wts <- pmin(wts, cap_95)
+
+tibble(
+  weight = c(wts, trimmed_wts),
+  stage = rep(c("Original", "Trimmed (P95)"), each = length(wts))
+) |>
+  ggplot(aes(x = weight, fill = stage)) +
+  geom_histogram(bins = 40, alpha = 0.6, position = "identity") +
+  geom_vline(xintercept = cap_95, linetype = "dashed", color = "red") +
+  scale_x_continuous(labels = label_comma()) +
+  scale_fill_manual(values = c("Original" = "#d97706",
+                                "Trimmed (P95)" = "#2563eb")) +
+  labs(
+    title = "Weight Trimming at P95",
+    subtitle = sprintf("Cap = %s", format(round(cap_95), big.mark = ",")),
+    x = "Weight", y = "Count", fill = NULL
+  )
+```
+
+#### Python
+
+```{python}
+#| label: fig-trimming-py
+#| fig-cap: "Weight trimming visualization (Python)."
+#| fig-width: 9
+#| fig-height: 4
+
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+
+wts = r.wts
+cap_95 = np.percentile(wts, 95)
+trimmed = np.minimum(wts, cap_95)
+
+fig, axes = plt.subplots(1, 2, figsize=(9, 4), sharey=True)
+
+axes[0].hist(wts, bins=40, alpha=0.6, color='#d97706')
+axes[0].axvline(cap_95, linestyle='--', color='red')
+axes[0].set_title('Original Weights')
+axes[0].set_xlabel('Weight')
+axes[0].set_ylabel('Count')
+
+axes[1].hist(trimmed, bins=40, alpha=0.6, color='#2563eb')
+axes[1].axvline(cap_95, linestyle='--', color='red')
+axes[1].set_title('Trimmed (P95)')
+axes[1].set_xlabel('Weight')
+
+for ax in axes:
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(
+        lambda x, p: f'{x:,.0f}'))
+
+plt.suptitle(f'Weight Trimming (cap = {cap_95:,.0f})', fontweight='bold')
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+## Effective Sample Size Setelah Weighting
+
+$$
+n_{eff} = \frac{(\sum w_i)^2}{\sum w_i^2} = \frac{n}{1 + \text{CV}(w)^2}
+$$ {#eq-neff-weight}
+
+::: {.panel-tabset}
+
+### R
+
+```{r}
+#| label: tbl-neff
+#| tbl-cap: "Effective sample size pada setiap tahap weighting."
+
+calc_neff <- function(w) {
+  sum(w)^2 / sum(w^2)
+}
+
+tibble(
+  Stage = c("Base weight", "NR adjusted", "Post-raking", "Trimmed (P95)"),
+  n_actual = nrow(respondents),
+  n_eff = c(
+    calc_neff(respondents$base_weight),
+    calc_neff(respondents$wt_nr),
+    calc_neff(weights(des_rake)),
+    calc_neff(trimmed_wts)
+  ),
+  CV_weights = c(
+    sd(respondents$base_weight) / mean(respondents$base_weight),
+    sd(respondents$wt_nr) / mean(respondents$wt_nr),
+    sd(weights(des_rake)) / mean(weights(des_rake)),
+    sd(trimmed_wts) / mean(trimmed_wts)
+  ),
+  DEFF_w = c(
+    1 + (sd(respondents$base_weight) / mean(respondents$base_weight))^2,
+    1 + (sd(respondents$wt_nr) / mean(respondents$wt_nr))^2,
+    1 + (sd(weights(des_rake)) / mean(weights(des_rake)))^2,
+    1 + (sd(trimmed_wts) / mean(trimmed_wts))^2
+  )
+) |>
+  mutate(across(c(n_eff, CV_weights, DEFF_w), ~round(., 2))) |>
+  gt() |>
+  tab_header(title = "Effective Sample Size by Weighting Stage")
+```
+
+### Python
+
+```{python}
+#| label: tbl-neff-py
+
+import numpy as np
+import pandas as pd
+
+def calc_neff(w):
+    return w.sum()**2 / (w**2).sum()
+
+sample_py = r.respondents.copy()
+wts_rake = np.array(r['weights(des_rake)']) if hasattr(r, 'des_rake') else sample_py['wt_nr'].values
+
+base_w = sample_py['base_weight'].values
+nr_w = sample_py['wt_nr'].values
+
+results = pd.DataFrame({
+    'Stage': ['Base weight', 'NR adjusted'],
+    'n_actual': [len(sample_py)] * 2,
+    'n_eff': [calc_neff(base_w), calc_neff(nr_w)],
+    'CV_weights': [base_w.std()/base_w.mean(), nr_w.std()/nr_w.mean()],
+})
+results['n_eff'] = results['n_eff'].round(1)
+results['CV_weights'] = results['CV_weights'].round(4)
+results
+```
+
+:::
+
+## Weight Diagnostics
+
+### Checklist Diagnostik
+
+1. **Distribusi weight:** histogram, box plot — cari extreme values
+2. **CV of weights:** target CV < 1.0; CV > 1.5 problematic
+3. **Sum of weights:** harus ≈ $N$ (population size)
+4. **Ratio max/min weight:** jika > 20, pertimbangkan trimming
+5. **Marginal distributions:** setelah calibration, distribusi variabel kunci harus match populasi
+
+::: {.panel-tabset}
+
+### R
+
+```{r}
+#| label: fig-diagnostics
+#| fig-cap: "Weight diagnostics: distribusi, Q-Q plot, dan perbandingan marginal."
+#| fig-width: 10
+#| fig-height: 8
+
+library(patchwork)
+
+final_wts <- weights(des_rake)
+
+# 1. Histogram
+p1 <- ggplot(tibble(w = final_wts), aes(x = w)) +
+  geom_histogram(bins = 40, fill = "#2563eb", alpha = 0.7) +
+  scale_x_continuous(labels = label_comma()) +
+  labs(title = "Weight Distribution", x = "Weight", y = "Count")
+
+# 2. Box plot by stratum
+p2 <- respondents |>
+  mutate(w = final_wts) |>
+  ggplot(aes(x = region, y = w, fill = urban_rural)) +
+  geom_boxplot(alpha = 0.7) +
+  scale_y_continuous(labels = label_comma()) +
+  scale_fill_manual(values = sampling_colors) +
+  labs(title = "Weights by Region × Urban/Rural", x = NULL, y = "Weight") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# 3. Marginal check: urban/rural
+pop_prop <- prop.table(table(pop$urban_rural))
+samp_unwt <- prop.table(table(respondents$urban_rural))
+samp_wt <- prop.table(svytable(~urban_rural, des_rake))
+
+marginal_df <- tibble(
+  category = rep(names(pop_prop), 3),
+  proportion = c(pop_prop, samp_unwt, samp_wt),
+  source = rep(c("Population", "Sample (unweighted)", "Sample (weighted)"),
+               each = length(pop_prop))
+)
+
+p3 <- ggplot(marginal_df, aes(x = category, y = proportion, fill = source)) +
+  geom_col(position = "dodge", alpha = 0.8) +
+  scale_fill_manual(values = c("Population" = "#059669",
+                                "Sample (unweighted)" = "#d97706",
+                                "Sample (weighted)" = "#2563eb")) +
+  labs(title = "Marginal Check: Urban/Rural", x = NULL, y = "Proportion",
+       fill = NULL) +
+  scale_y_continuous(labels = percent)
+
+# Combine
+(p1 | p2) / p3 +
+  plot_annotation(title = "Weight Diagnostics Dashboard")
+```
+
+### Python
+
+```{python}
+#| label: fig-diagnostics-py
+#| fig-cap: "Weight diagnostics (Python)."
+#| fig-width: 10
+#| fig-height: 4
+
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+
+wts = np.array(r['weights(des_rake)'])
+
+fig, axes = plt.subplots(1, 3, figsize=(10, 4))
+
+# Histogram
+axes[0].hist(wts, bins=40, color='#2563eb', alpha=0.7)
+axes[0].set_title('Weight Distribution')
+axes[0].set_xlabel('Weight')
+axes[0].xaxis.set_major_formatter(mticker.FuncFormatter(
+    lambda x, p: f'{x:,.0f}'))
+
+# Box plot
+axes[1].boxplot(wts, vert=True)
+axes[1].set_title('Weight Box Plot')
+axes[1].set_ylabel('Weight')
+axes[1].yaxis.set_major_formatter(mticker.FuncFormatter(
+    lambda x, p: f'{x:,.0f}'))
+
+# Summary stats
+stats_text = (
+    f"n = {len(wts)}\n"
+    f"Mean = {wts.mean():,.1f}\n"
+    f"Median = {np.median(wts):,.1f}\n"
+    f"CV = {wts.std()/wts.mean():.3f}\n"
+    f"Max/Min = {wts.max()/wts.min():.1f}\n"
+    f"Sum = {wts.sum():,.0f}"
+)
+axes[2].text(0.1, 0.5, stats_text, transform=axes[2].transAxes,
+             fontsize=11, verticalalignment='center', fontfamily='monospace',
+             bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.3))
+axes[2].set_title('Summary Statistics')
+axes[2].axis('off')
+
+plt.suptitle('Weight Diagnostics', fontweight='bold')
+plt.tight_layout()
+plt.show()
+```
+
+:::
+
+::: {.takeaways}
+### Key Takeaways
+
+1. **Base weight = 1/π_i** — ini adalah starting point. Jangan pernah analyze data survei tanpa weight.
+2. **Non-response adjustment** mengoreksi bias dari unit yang tidak merespons, menggunakan weighting classes atau propensity models.
+3. **Calibration/raking** menyesuaikan weight agar distribusi match dengan populasi yang diketahui — mengurangi bias dan bisa meningkatkan presisi.
+4. **Weight trimming** mengurangi varians dari extreme weights, tapi trade-off dengan sedikit bias.
+5. **Selalu lakukan diagnostik:** cek CV of weights, distribusi, dan marginal conformity setelah setiap tahap adjustment.
+:::
+
+::: {.exercises}
+### Exercises
+
+1. **Weight construction.** Dari desain two-stage (15 district PPS, 20 RT per district), hitung base weight untuk setiap unit. Verifikasi bahwa $\sum w_i \approx N$.
+
+2. **Non-response simulation.** Simulasikan non-response yang berkorelasi dengan income (higher income = lower response). Bandingkan estimasi mean income: (a) tanpa adjustment, (b) dengan weighting class adjustment (urban/rural × education), (c) dengan propensity model. Mana yang paling efektif mengurangi bias?
+
+3. **Calibration exercise.** Lakukan raking pada sampel menggunakan distribusi populasi: urban/rural, region, dan education level. Berapa persen pengurangan bias? Berapa n_eff setelah raking?
+:::
+
+### Further Reading
+
+- @valliant2018: Panduan praktis pembuatan dan adjustment weights.
+- @deville1992: Teori formal calibration estimation.
+- @kish1992: Konsep DEFF karena weighting dan implikasinya.
